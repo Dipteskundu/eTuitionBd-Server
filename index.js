@@ -53,19 +53,17 @@ const verifyJWT = async (req, res, next) => {
         console.warn("WARNING: Firebase Admin not initialized. Using MANUAL token decoding for development.")
 
         try {
-            // Manual Decode (Header.Payload.Signature)
-            const base64Url = token.split('.')[1];
-            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-            const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
-                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-            }).join(''));
+            // Manual Decode (Header.Payload.Signature) using Node Buffer
+            const base64Url = token.split('.')[1]
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+            const jsonPayload = Buffer.from(base64, 'base64').toString('utf-8')
 
-            const decoded = JSON.parse(jsonPayload);
+            const decoded = JSON.parse(jsonPayload)
 
             if (!decoded.email) throw new Error("No email in token")
 
             req.tokenEmail = decoded.email
-            console.log("tokeEmail:", req.tokenEmail);
+            console.log("tokeEmail:", req.tokenEmail)
             return next()
         } catch (err) {
             console.error("Manual decode failed:", err.message)
