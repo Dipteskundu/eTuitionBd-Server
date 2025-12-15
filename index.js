@@ -446,6 +446,33 @@ async function run() {
         // STUDENT APPLICATION MANAGEMENT & PAYMENT
         // ========================================
 
+        // ALLIED & STRICT API Endpoints for Full Implementation Prompt
+
+        // 1. GET Applications for Tuition (Strict: GET /applications/:tuitionId)
+        app.get('/applications/:tuitionId', verifyJWT, verifySTUDENT, async (req, res) => {
+            const tuitionId = req.params.tuitionId;
+            const query = { tuitionId: tuitionId };
+            const result = await applicationsCollection.find(query).toArray();
+
+            // Enrich with Tutor Details for Frontend UI
+            for (let app of result) {
+                const tutor = await usersCollection.findOne({ email: app.tutorEmail });
+                if (tutor) {
+                    app.tutorName = tutor.name; // Crucial for displaying name
+                    app.tutorPhoto = tutor.photoURL || tutor.image;
+                }
+            }
+            res.send(result);
+        });
+
+        // 2. DELETE Application (Strict: DELETE /applications/:id)
+        app.delete('/applications/:id', verifyJWT, verifySTUDENT, async (req, res) => {
+            const id = req.params.id;
+            const result = await applicationsCollection.deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
+
+        // (Keeping legacy endpoint for backwards compatibility if needed, but the new one covers it)
         // Get Applications for a Tuition (GET /applied-tutors/:tuitionId)
         app.get('/applied-tutors/:tuitionId', verifyJWT, verifySTUDENT, async (req, res) => {
             const tuitionId = req.params.tuitionId;
