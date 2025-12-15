@@ -446,6 +446,77 @@ async function run() {
         // STUDENT APPLICATION MANAGEMENT & PAYMENT
         // ========================================
 
+        // Phase 2: Fetch Applications for a Student (GET /student-applications/:studentId)
+        app.get('/student-applications/:studentId', verifyJWT, verifySTUDENT, async (req, res) => {
+            const studentId = req.params.studentId;
+            // In our system, studentId is often the email. 
+            // Verify requested ID matches token to prevent spying
+            if (studentId !== req.tokenEmail) {
+                return res.status(403).send({ message: 'Forbidden access' });
+            }
+
+            const query = { studentEmail: studentId };
+            const result = await applicationsCollection.find(query).sort({ created_at: -1 }).toArray();
+
+            // Enrich with Tutor Details and Tuition Title
+            for (let app of result) {
+                // Attach Tutor Info
+                const tutor = await usersCollection.findOne({ email: app.tutorEmail });
+                if (tutor) {
+                    app.tutorName = tutor.name;
+                    app.tutorPhoto = tutor.photoURL || tutor.image;
+                }
+                // Attach Tuition Info (Subject, Class)
+                if (app.tuitionId) {
+                    const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(app.tuitionId) });
+                    if (tuition) {
+                        app.tuitionTitle = `${tuition.subject} (Class ${tuition.class})`;
+                        app.tuitionSubject = tuition.subject;
+                        app.tuitionClass = tuition.class;
+                        app.tuitionSalary = tuition.salary;
+                    }
+                }
+            }
+            res.send(result);
+        });
+
+        // Phase 1: Submit Application (POST /tuition-application)
+        // Aliasing logic to support prompt requirement
+        app.post('/tuition-application', verifyJWT, verifyTUTOR, async (req, res) => {
+            const { tuitionId, message, expectedSalary, availability, experience } = req.body;
+            const tutorEmail = req.tokenEmail;
+
+            // 1. Check if already applied
+            const existingApp = await applicationsCollection.findOne({
+                tutorEmail: tutorEmail,
+                tuitionId: tuitionId
+            });
+            if (existingApp) {
+                return res.status(409).send({ message: 'Already applied' });
+            }
+
+            // 2. Get Tuition Details
+            const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
+            if (!tuition) return res.status(404).send({ message: 'Tuition not found' });
+            if (tuition.status !== 'approved') return res.status(403).send({ message: 'Tuition is not open' });
+
+            // 3. Create Application
+            const newApplication = {
+                tuitionId,
+                tutorEmail,
+                studentEmail: tuition.studentId,
+                message, // New Field
+                expectedSalary, // New Field
+                availability, // New Field
+                experience, // Keeping legacy support
+                status: 'pending',
+                created_at: new Date()
+            };
+
+            const result = await applicationsCollection.insertOne(newApplication);
+            res.send({ success: true, ...result });
+        });
+
         // ALLIED & STRICT API Endpoints for Full Implementation Prompt
 
         // 1. GET Applications for Tuition (Strict: GET /applications/:tuitionId)
