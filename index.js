@@ -504,6 +504,63 @@ async function run() {
             res.send({ success: true, paymentId: paymentResult.insertedId });
         });
 
+        // Demo Payment API (POST /payments/demo)
+        app.post('/payments/demo', verifyJWT, verifySTUDENT, async (req, res) => {
+            const { applicationId, tuitionId, tutorEmail, amount } = req.body;
+            const studentEmail = req.tokenEmail;
+
+            // 1. Simulate Payment Success
+            const transactionId = 'DEMO_' + new Date().getTime();
+
+            // 2. Record Payment
+            const payment = {
+                transactionId,
+                studentEmail,
+                tutorEmail,
+                tuitionId,
+                applicationId,
+                amount: parseFloat(amount),
+                currency: 'BDT',
+                status: 'paid', // Success
+                method: 'Demo PaymentSystem',
+                date: new Date()
+            };
+            const paymentResult = await paymentsCollection.insertOne(payment);
+
+            // 3. Update Application Status to 'approved'
+            await applicationsCollection.updateOne(
+                { _id: new ObjectId(applicationId) },
+                { $set: { status: 'approved', paymentId: transactionId } }
+            );
+
+            // 4. Close Tuition and Assign Tutor
+            await tuitionsPostCollection.updateOne(
+                { _id: new ObjectId(tuitionId) },
+                { $set: { status: 'ongoing', assignedTutorEmail: tutorEmail, assignedTutorId: tutorEmail } }
+            );
+
+            // 5. Reject other applications for this tuition
+            await applicationsCollection.updateMany(
+                { tuitionId: tuitionId, _id: { $ne: new ObjectId(applicationId) } },
+                { $set: { status: 'rejected' } }
+            );
+
+            res.send({ success: true, paymentId: transactionId, status: "Success" });
+        });
+
+        // Patch Application Status (PATCH /applications/:id)
+        app.patch('/applications/:id', verifyJWT, verifySTUDENT, async (req, res) => {
+            const id = req.params.id;
+            const { status } = req.body; // Expecting 'rejected'
+
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: { status: status }
+            };
+            const result = await applicationsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
         // Get My Payments (Student & Tutor)
         app.get('/my-payments', verifyJWT, async (req, res) => {
             const email = req.tokenEmail;
