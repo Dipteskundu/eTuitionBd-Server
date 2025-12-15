@@ -256,6 +256,18 @@ async function run() {
         // PUBLIC APIs
         // ========================================
 
+        // Get All Tutors (GET /tutors) - Public Access
+        app.get('/tutors', async (req, res) => {
+            try {
+                const query = { role: 'tutor' };
+                const tutors = await usersCollection.find(query).toArray();
+                res.send(tutors);
+            } catch (error) {
+                console.error('Error fetching tutors:', error);
+                res.status(500).send({ message: 'Failed to fetch tutors' });
+            }
+        });
+
         // Get Public Generic Tuitions (GET /tuitions) - Public Access
         app.get('/tuitions', async (req, res) => {
             // Requirement: "Shown in Tuition page that can see every one without login"
