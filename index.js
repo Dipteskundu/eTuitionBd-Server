@@ -72,6 +72,7 @@ async function run() {
         const tuitionsPostCollection = db.collection("tuitions-post"); // NEW Collection
         const applicationsCollection = db.collection("tutorApplications");
         const paymentsCollection = db.collection("payments");
+        const roleRequestsCollection = db.collection("teacherRoleRequests"); // NEW Collection: Role Requests
 
         // ========================================
         // MIDDLEWARE: JWT Verification
@@ -290,6 +291,14 @@ async function run() {
                 return res.status(404).send({ message: 'Tuition not found' });
             }
 
+            // Strict Validation Rules
+            if (tuition.status !== 'approved') {
+                return res.status(403).send({ message: 'Tuition is not open for applications' });
+            }
+            if (tuition.assignedTutorEmail || tuition.assignedTutorId) {
+                return res.status(409).send({ message: 'Tuition already assigned to a tutor' });
+            }
+
             // 3. Create Application
             const newApplication = {
                 tuitionId: tuitionId,
@@ -341,6 +350,95 @@ async function run() {
             const email = req.tokenEmail;
             const query = { tutorEmail: email };
             const result = await applicationsCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        // ========================================
+        // TEACHER ROLE REQUEST APIs
+        // ========================================
+
+        // 1. Create Role Request (POST /role-requests) - Student Only
+        app.post('/role-requests', verifyJWT, verifySTUDENT, async (req, res) => {
+            const request = req.body;
+            const email = req.tokenEmail;
+
+            // Check if pending request exists
+            const existing = await roleRequestsCollection.findOne({
+                userId: email,
+                status: 'pending'
+            });
+
+            if (existing) {
+                return res.status(409).send({ message: 'You already have a pending request.' });
+            }
+
+            const newRequest = {
+                userId: email, // Using email as ID
+                userName: request.userName,
+                userEmail: email,
+                currentRole: 'student',
+                requestedRole: 'tutor',
+                status: 'pending',
+                created_at: new Date(),
+                reviewedBy: null,
+                reviewedAt: null
+            };
+
+            const result = await roleRequestsCollection.insertOne(newRequest);
+            res.send(result);
+        });
+
+        // 2. Get My Requests (GET /role-requests/my) - Student/Tutor
+        app.get('/role-requests/my', verifyJWT, async (req, res) => {
+            const email = req.tokenEmail;
+            const result = await roleRequestsCollection.find({ userId: email }).sort({ created_at: -1 }).toArray();
+            res.send(result);
+        });
+
+        // 3. Get All Pending Requests (GET /role-requests) - Admin Only
+        app.get('/role-requests', verifyJWT, verifyADMIN, async (req, res) => {
+            const status = req.query.status;
+            let query = {};
+            if (status) query.status = status;
+
+            const result = await roleRequestsCollection.find(query).sort({ created_at: -1 }).toArray();
+            res.send(result);
+        });
+
+        // 4. Admin Action: Approve/Reject (PATCH /role-requests/:id)
+        app.patch('/role-requests/:id', verifyJWT, verifyADMIN, async (req, res) => {
+            const id = req.params.id;
+            const { status, adminId } = req.body; // status: 'approved' | 'rejected'
+
+            const request = await roleRequestsCollection.findOne({ _id: new ObjectId(id) });
+            if (!request) return res.status(404).send({ message: 'Request not found' });
+
+            if (status === 'approved') {
+                // Update User Role in Users Collection
+                const userUpdate = await usersCollection.updateOne(
+                    { email: request.userEmail },
+                    { $set: { role: 'tutor' } }
+                );
+
+                if (userUpdate.modifiedCount === 0) {
+                    // Should not happen unless user deleted
+                    // Proceeding to update request status anyway or handle error?
+                    // Let's assume success for now, but log it.
+                    console.warn(`User ${request.userEmail} not found while approving role.`);
+                }
+            }
+
+            // Update Request Status
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    status: status,
+                    reviewedBy: req.tokenEmail,
+                    reviewedAt: new Date()
+                }
+            };
+
+            const result = await roleRequestsCollection.updateOne(filter, updateDoc);
             res.send(result);
         });
 
