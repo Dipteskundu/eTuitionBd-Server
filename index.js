@@ -561,7 +561,7 @@ async function run() {
             res.send(result);
         });
 
-        // Get My Payments (Student & Tutor)
+        // Get My Payments (Student & Tutor) - Enriched
         app.get('/my-payments', verifyJWT, async (req, res) => {
             const email = req.tokenEmail;
             const query = {
@@ -570,8 +570,23 @@ async function run() {
                     { tutorEmail: email }
                 ]
             };
-            const result = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
-            res.send(result);
+            const payments = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
+
+            // Enrich with details
+            for (let payment of payments) {
+                // Get Tuition Title
+                if (payment.tuitionId) {
+                    const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(payment.tuitionId) });
+                    if (tuition) payment.tuitionTitle = tuition.subject;
+                }
+
+                // Get Other Party Name
+                const otherEmail = payment.studentEmail === email ? payment.tutorEmail : payment.studentEmail;
+                const user = await usersCollection.findOne({ email: otherEmail });
+                if (user) payment.otherName = user.name;
+            }
+
+            res.send(payments);
         });
 
         app.get('/tutor/dashboard-stats', verifyJWT, verifyTUTOR, async (req, res) => {
