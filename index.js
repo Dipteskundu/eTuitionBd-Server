@@ -687,6 +687,20 @@ async function run() {
         });
 
         // Process Demo Payment (POST /process-payment)
+        // ALIASING: GET /student/recent-activities
+        app.get('/student/recent-activities', verifyJWT, verifySTUDENT, async (req, res) => {
+            console.log("DEBUG: Hit /student/recent-activities");
+            const email = req.tokenEmail;
+
+            // Recent Tuitions Posted
+            const recentTuitions = await tuitionsPostCollection.find({ studentId: email })
+                .sort({ created_at: -1 })
+                .limit(3)
+                .toArray();
+
+            res.send(recentTuitions);
+        });
+
         app.post('/process-payment', verifyJWT, verifySTUDENT, async (req, res) => {
             const { applicationId, tuitionId, tutorEmail, amount, method, transactionId } = req.body;
             const studentEmail = req.tokenEmail;
@@ -897,23 +911,8 @@ async function run() {
 
         // ...
 
-        // Get Active Tuition Posts (Strict Requirement: GET /tuitions-post)
-        // Only for Tutors. Step 2 Outcome: Tutors only see 'approved' posts.
-        app.get('/tuitions-post', verifyJWT, verifyTUTOR, async (req, res) => {
-            const query = { status: 'approved' }; // Only show Admin-approved tuitions
+        // Duplicate route removed
 
-            // Support Filters
-            const { subject, location, className } = req.query;
-            if (subject) query.subject = { $regex: subject, $options: 'i' };
-            if (location) query.location = { $regex: location, $options: 'i' };
-            if (className) query.class = className;
-
-            const result = await tuitionsPostCollection.find(query)
-                .sort({ created_at: -1 })
-                .toArray();
-
-            res.send(result);
-        });
 
         // ...
 
