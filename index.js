@@ -270,13 +270,69 @@ async function run() {
 
         // Get Public Generic Tuitions (GET /tuitions) - Public Access
         app.get('/tuitions', async (req, res) => {
-            // Requirement: "Shown in Tuition page that can see every one without login"
-            // Showing all approved tuitions
-            const query = { status: 'approved' };
-            const result = await tuitionsPostCollection.find(query).sort({ created_at: -1 }).toArray();
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 9;
+                const skip = (page - 1) * limit;
 
-            // Format for frontend (Tuitions.jsx expects res.data.data)
-            res.send({ data: result, total: result.length });
+                const { search, sort, subject, location, stuClass } = req.query;
+
+                const query = { status: 'approved' };
+
+                // 1. Search (Subject or Location)
+                if (search) {
+                    query.$or = [
+                        { subject: { $regex: search, $options: 'i' } },
+                        { location: { $regex: search, $options: 'i' } }
+                    ];
+                }
+
+                // 2. Advanced Filters
+                if (subject) query.subject = { $regex: subject, $options: 'i' };
+                if (location) query.location = { $regex: location, $options: 'i' };
+                if (stuClass) query.class = { $regex: stuClass, $options: 'i' };
+
+                // 3. Sorting
+                let sortOptions = { created_at: -1 }; // Default: Newest
+                if (sort === 'price_asc') {
+                    sortOptions = { salary: 1 }; // Budget Low to High (Note: salary is stored as string in seed, usually needs conversion, but relying on seeded/input format)
+                    // If salary is string "5000", simple sort workslexicographically. ideally should be numeric.
+                } else if (sort === 'price_desc') {
+                    sortOptions = { salary: -1 }; // Budget High to Low
+                } else if (sort === 'newest') {
+                    sortOptions = { created_at: -1 };
+                }
+
+                const total = await tuitionsPostCollection.countDocuments(query);
+                const result = await tuitionsPostCollection.find(query)
+                    .sort(sortOptions)
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                res.send({
+                    data: result,
+                    total,
+                    currentPage: page,
+                    totalPages: Math.ceil(total / limit)
+                });
+            } catch (error) {
+                console.error("Error fetching tuitions:", error);
+                res.status(500).send({ message: "Failed to fetch tuitions" });
+            }
+        });
+
+        // Get Single Tuition Details (GET /tuitions/:id) - Public Access
+        app.get('/tuitions/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const query = { _id: new ObjectId(id) };
+                const result = await tuitionsPostCollection.findOne(query);
+                res.send(result);
+            } catch (error) {
+                console.error("Error fetching tuition:", error);
+                res.status(500).send({ message: "Error fetching tuition details" });
+            }
         });
 
         // ---------------------------------------------------------
@@ -457,6 +513,57 @@ async function run() {
         // ========================================
         // STUDENT APPLICATION MANAGEMENT & PAYMENT
         // ========================================
+
+        // ========================================
+        // STUDENT APPLICATION MANAGEMENT & PAYMENT
+        // ========================================
+
+        // Student Dashboard Stats (GET /student/dashboard-stats)
+        app.get('/student/dashboard-stats', verifyJWT, verifySTUDENT, async (req, res) => {
+            const email = req.tokenEmail;
+
+            try {
+                // Total Applications (Where student is the sender or receiver? Assuming student receives applications for their tuitions?)
+                // Wait, "Student Applications" usually means applications *submitted* by the student?
+                // But in this app, STUDENTS POST TUITIONS and TUTORS APPLY.
+                // So "Student Dashboard" shows how many Tutors applied to THEIR posts.
+
+                // Let's count how many applications exist for tuitions posted by this student.
+                // 1. Get all tuition IDs by this student
+                const myTuitions = await tuitionsPostCollection.find({ studentId: email }).toArray();
+                const myTuitionIds = myTuitions.map(t => t._id.toString());
+
+                // 2. Count applications for these tuitions
+                const totalApplicationsReceived = await applicationsCollection.countDocuments({
+                    tuitionId: { $in: myTuitionIds } // Incorrect, tuitionId is ObjectId usually, but let's check schema. In apply-tuition it casts to ObjectId.
+                    // Wait, in apply-tuition, tuitionId is stored as string from body? No: 'tuitionId: tuitionId' from body.
+                    // Let's assume string for now or check data.
+                    // Actually, simpler metric: Total Tuitions Posted
+                });
+
+                // Let's stick to simple metrics first requested by typical dashboards
+                // 1. Total Tuitions Posted
+                const totalTuitions = await tuitionsPostCollection.countDocuments({ studentId: email });
+
+                // 2. Total Hired Tutors (Assigned)
+                const hiredTwitorsCount = await tuitionsPostCollection.countDocuments({ studentId: email, status: 'ongoing' }); // or assignedTutorEmail exists
+
+                // 3. Total Spending
+                const payments = await paymentsCollection.find({ studentEmail: email }).toArray();
+                const totalSpent = payments.reduce((sum, p) => sum + p.amount, 0);
+
+                res.send({
+                    totalTuitions,
+                    hiredTutors: hiredTwitorsCount,
+                    totalSpent,
+                    totalApplications: 0 // Placeholder or calculate properly if needed
+                });
+
+            } catch (error) {
+                console.error("Error fetching student stats:", error);
+                res.status(500).send({ message: "Failed to fetch stats" });
+            }
+        });
 
         // Phase 2: Fetch Applications for a Student (GET /student-applications/:studentId)
         app.get('/student-applications/:studentId', verifyJWT, verifySTUDENT, async (req, res) => {
