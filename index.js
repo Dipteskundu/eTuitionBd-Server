@@ -16,23 +16,23 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Initialize Services
+
 // Stripe
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 
-// Firebase Admin
+
 // Firebase Admin
 try {
     let serviceAccount;
     try {
-        // Try local file first (Easy dev)
+       
         serviceAccount = require('./assingment-11-service-key.json');
     } catch (e) {
-        // If file not found or error, ignore and check env
+        
     }
 
     if (!serviceAccount && process.env.FB_SERVICE_KEY) {
-        // Fallback to Env Var (Production)
+       
         serviceAccount = JSON.parse(Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('ascii'));
     }
 
@@ -62,21 +62,36 @@ const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 5000
 });
 
+// Connection Status
+let dbStatus = "Initializing...";
+let dbError = null;
+
 async function run() {
     try {
+        dbStatus = "Connecting...";
         await client.connect();
+        dbStatus = "Connected";
+        console.log("MongoDB Connected Successfully");
 
         const db = client.db("tuitionDB");
+        // ... (rest of collections)
         const usersCollection = db.collection("users");
-        const tuitionsCollection = db.collection("tuitions"); // Keeping for legacy/safekeeping if needed
+        // const tuitionsCollection = db.collection("tuitions"); // REMOVED: Legacy unused
         const tuitionsPostCollection = db.collection("tuitions-post"); // NEW Collection
         const applicationsCollection = db.collection("tutorApplications");
         const paymentsCollection = db.collection("payments");
         const roleRequestsCollection = db.collection("teacherRoleRequests"); // NEW Collection: Role Requests
 
-        // ========================================
+        // New Feature Collections
+        const reviewsCollection = db.collection("reviews");
+        const bookmarksCollection = db.collection("bookmarks");
+        const notificationsCollection = db.collection("notifications");
+        const conversationsCollection = db.collection("conversations");
+        const messagesCollection = db.collection("messages");
+
+       
         // MIDDLEWARE: JWT Verification
-        // ========================================
+      
         const verifyJWT = async (req, res, next) => {
             const authorization = req.headers.authorization;
             if (!authorization) {
@@ -99,9 +114,9 @@ async function run() {
             }
         };
 
-        // ========================================
+
         // MIDDLEWARE: Role Verification
-        // ========================================
+       
         const verifySTUDENT = async (req, res, next) => {
             const email = req.tokenEmail;
             const user = await usersCollection.findOne({ email: email });
@@ -132,11 +147,13 @@ async function run() {
             next();
         };
 
-        // ========================================
-        // USER MANAGEMENT APIs
-        // ========================================
 
-        // 1. Create User (POST /user) - Used by Register & Login
+
+       
+        // USER MANAGEMENT APIs
+        
+
+        //  Create User (POST /user) - Used by Register & Login
         app.post('/user', async (req, res) => {
             const user = req.body;
             // Ensure displayName is saved if provided
@@ -151,7 +168,7 @@ async function run() {
             res.send(result);
         });
 
-        // 2. Get User Role (GET /users/:email) - Used by AuthContext
+        //  Get User Role (GET /users/:email) - Used by AuthContext
         app.get('/users/:email', async (req, res) => {
             const email = req.params.email;
             const query = { email: email };
@@ -159,13 +176,13 @@ async function run() {
             res.send(user);
         });
 
-        // 3. Get All Users (GET /users) - Used by Admin ManageUsers
+        //  Get All Users (GET /users) - Used by Admin ManageUsers
         app.get('/users', verifyJWT, verifyADMIN, async (req, res) => {
             const result = await usersCollection.find().toArray();
             res.send(result);
         });
 
-        // 4. Delete User (DELETE /user/:id) - Used by Admin ManageUsers
+        //  Delete User (DELETE /user/:id) - Used by Admin ManageUsers
         app.delete('/user/:id', verifyJWT, verifyADMIN, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
@@ -173,7 +190,7 @@ async function run() {
             res.send(result);
         });
 
-        // 5. Get My Profile (GET /user/profile) - Used by ProfileSettings
+        //  Get My Profile (GET /user/profile) - Used by ProfileSettings
         app.get('/user/profile', verifyJWT, async (req, res) => {
             const email = req.tokenEmail;
             const query = { email: email };
@@ -185,7 +202,7 @@ async function run() {
             res.send(user);
         });
 
-        // 6. Update My Profile (PUT /user/profile) - Used by ProfileSettings
+        //  Update My Profile (PUT /user/profile) - Used by ProfileSettings
         app.put('/user/profile', verifyJWT, async (req, res) => {
             const email = req.tokenEmail;
             const item = req.body;
@@ -208,7 +225,7 @@ async function run() {
             res.send(result);
         });
 
-        // 0. Admin Analytics (GET /reports/analytics)
+        //  Admin Analytics (GET /reports/analytics)
         app.get('/reports/analytics', verifyJWT, verifyADMIN, async (req, res) => {
             const totalUsers = await usersCollection.countDocuments();
             const totalStudentCount = await usersCollection.countDocuments({ role: 'student' });
@@ -227,13 +244,13 @@ async function run() {
             });
         });
 
-        // 7. Get All Tuitions for Admin (GET /admin/tuitions)
+        //  Get All Tuitions for Admin (GET /admin/tuitions)
         app.get('/admin/tuitions', verifyJWT, verifyADMIN, async (req, res) => {
             const result = await tuitionsPostCollection.find().sort({ created_at: -1 }).toArray();
             res.send(result);
         });
 
-        // 8. Update Tuition Status (PATCH /tuition-status/:id)
+        //  Update Tuition Status (PATCH /tuition-status/:id)
         app.patch('/tuition-status/:id', verifyJWT, verifyADMIN, async (req, res) => {
             const id = req.params.id;
             const { status } = req.body;
@@ -245,23 +262,61 @@ async function run() {
             res.send(result);
         });
 
-        // ... (in STUDENT APIs)
+        //  Get All Payments for Admin (GET /all-payments)
+        app.get('/all-payments', verifyJWT, verifyADMIN, async (req, res) => {
+            try {
+                const payments = await paymentsCollection.find()
+                    .sort({ date: -1, created_at: -1 })
+                    .toArray();
+                res.send(payments);
+            } catch (error) {
+                console.error('Error fetching all payments:', error);
+                res.status(500).send({ message: 'Failed to fetch payments' });
+            }
+        });
+
+        
 
 
 
         // ...
 
 
-        // ========================================
+    
         // PUBLIC APIs
-        // ========================================
+      
 
-        // Get All Tutors (GET /tutors) - Public Access
+        // Get All Tutors (GET /tutors) - Public Access with Pagination
         app.get('/tutors', async (req, res) => {
             try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 8;
+                const skip = (page - 1) * limit;
+                const search = req.query.search || '';
+
                 const query = { role: 'tutor' };
-                const tutors = await usersCollection.find(query).toArray();
-                res.send(tutors);
+
+                // Search by name or email
+                if (search) {
+                    query.$or = [
+                        { name: { $regex: search, $options: 'i' } },
+                        { displayName: { $regex: search, $options: 'i' } },
+                        { email: { $regex: search, $options: 'i' } }
+                    ];
+                }
+
+                const total = await usersCollection.countDocuments(query);
+                const tutors = await usersCollection.find(query)
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                res.send({
+                    data: tutors,
+                    total,
+                    currentPage: page,
+                    totalPages: Math.ceil(total / limit)
+                });
             } catch (error) {
                 console.error('Error fetching tutors:', error);
                 res.status(500).send({ message: 'Failed to fetch tutors' });
@@ -295,10 +350,10 @@ async function run() {
                 // 3. Sorting
                 let sortOptions = { created_at: -1 }; // Default: Newest
                 if (sort === 'price_asc') {
-                    sortOptions = { salary: 1 }; // Budget Low to High (Note: salary is stored as string in seed, usually needs conversion, but relying on seeded/input format)
-                    // If salary is string "5000", simple sort workslexicographically. ideally should be numeric.
+                    sortOptions = { salary: 1 }; 
+                    
                 } else if (sort === 'price_desc') {
-                    sortOptions = { salary: -1 }; // Budget High to Low
+                    sortOptions = { salary: -1 }; 
                 } else if (sort === 'newest') {
                     sortOptions = { created_at: -1 };
                 }
@@ -335,9 +390,423 @@ async function run() {
             }
         });
 
-        // ---------------------------------------------------------
+        
+        // REVIEWS APIs
+  
+
+        // Submit a Review (POST /reviews) - Student only
+        app.post('/reviews', verifyJWT, verifySTUDENT, async (req, res) => {
+            try {
+                const { tutorEmail, rating, comment, tuitionId } = req.body;
+                const studentEmail = req.tokenEmail;
+
+                // Check if student has a completed/ongoing tuition with this tutor
+                const hasTuition = await paymentsCollection.findOne({
+                    studentEmail,
+                    tutorEmail,
+                    status: 'paid'
+                });
+
+                if (!hasTuition) {
+                    return res.status(403).send({ message: 'You can only review tutors you have hired' });
+                }
+
+                // Check if already reviewed this tutor
+                const existingReview = await reviewsCollection.findOne({ studentEmail, tutorEmail });
+                if (existingReview) {
+                    return res.status(409).send({ message: 'You have already reviewed this tutor' });
+                }
+
+                const review = {
+                    tutorEmail,
+                    studentEmail,
+                    tuitionId,
+                    rating: Number(rating),
+                    comment,
+                    createdAt: new Date()
+                };
+
+                const result = await reviewsCollection.insertOne(review);
+
+                // Create notification for tutor
+                await notificationsCollection.insertOne({
+                    userEmail: tutorEmail,
+                    type: 'review',
+                    message: `You received a ${rating}-star review!`,
+                    link: '/dashboard/tutor/reviews',
+                    read: false,
+                    createdAt: new Date()
+                });
+
+                res.send(result);
+            } catch (error) {
+                console.error('Error submitting review:', error);
+                res.status(500).send({ message: 'Failed to submit review' });
+            }
+        });
+
+        // Get Reviews for a Tutor (GET /reviews/:tutorEmail)
+        app.get('/reviews/:tutorEmail', async (req, res) => {
+            try {
+                const { tutorEmail } = req.params;
+                const reviews = await reviewsCollection.find({ tutorEmail })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(reviews);
+            } catch (error) {
+                console.error('Error fetching reviews:', error);
+                res.status(500).send({ message: 'Failed to fetch reviews' });
+            }
+        });
+
+        // Get Average Rating for a Tutor (GET /tutor-rating/:tutorEmail)
+        app.get('/tutor-rating/:tutorEmail', async (req, res) => {
+            try {
+                const { tutorEmail } = req.params;
+                const reviews = await reviewsCollection.find({ tutorEmail }).toArray();
+
+                if (reviews.length === 0) {
+                    return res.send({ averageRating: 0, totalReviews: 0 });
+                }
+
+                const totalRating = reviews.reduce((sum, r) => sum + r.rating, 0);
+                const averageRating = (totalRating / reviews.length).toFixed(1);
+
+                res.send({ averageRating: parseFloat(averageRating), totalReviews: reviews.length });
+            } catch (error) {
+                console.error('Error fetching tutor rating:', error);
+                res.status(500).send({ message: 'Failed to fetch rating' });
+            }
+        });
+
+      
+        // BOOKMARKS APIs
+   
+
+        // Toggle Bookmark (POST /bookmarks)
+        app.post('/bookmarks', verifyJWT, async (req, res) => {
+            try {
+                const { itemId, type } = req.body; // type = 'tutor' | 'tuition'
+                const userEmail = req.tokenEmail;
+
+                const existing = await bookmarksCollection.findOne({ userEmail, itemId, type });
+
+                if (existing) {
+                    // Remove bookmark
+                    await bookmarksCollection.deleteOne({ _id: existing._id });
+                    res.send({ bookmarked: false, message: 'Bookmark removed' });
+                } else {
+                    // Add bookmark
+                    await bookmarksCollection.insertOne({
+                        userEmail,
+                        itemId,
+                        type,
+                        createdAt: new Date()
+                    });
+                    res.send({ bookmarked: true, message: 'Bookmark added' });
+                }
+            } catch (error) {
+                console.error('Error toggling bookmark:', error);
+                res.status(500).send({ message: 'Failed to toggle bookmark' });
+            }
+        });
+
+        // Get My Bookmarks (GET /my-bookmarks)
+        app.get('/my-bookmarks', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.tokenEmail;
+                const { type } = req.query;
+
+                const query = { userEmail };
+                if (type) query.type = type;
+
+                const bookmarks = await bookmarksCollection.find(query).sort({ createdAt: -1 }).toArray();
+                res.send(bookmarks);
+            } catch (error) {
+                console.error('Error fetching bookmarks:', error);
+                res.status(500).send({ message: 'Failed to fetch bookmarks' });
+            }
+        });
+
+        // Check if Bookmarked (GET /is-bookmarked)
+        app.get('/is-bookmarked', verifyJWT, async (req, res) => {
+            try {
+                const { itemId, type } = req.query;
+                const userEmail = req.tokenEmail;
+
+                const existing = await bookmarksCollection.findOne({ userEmail, itemId, type });
+                res.send({ bookmarked: !!existing });
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to check bookmark' });
+            }
+        });
+
+ 
+        // NOTIFICATIONS APIs
+
+
+        // Get My Notifications (GET /notifications)
+        app.get('/notifications', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.tokenEmail;
+                const notifications = await notificationsCollection
+                    .find({ userEmail })
+                    .sort({ createdAt: -1 })
+                    .limit(20)
+                    .toArray();
+                res.send(notifications);
+            } catch (error) {
+                console.error('Error fetching notifications:', error);
+                res.status(500).send({ message: 'Failed to fetch notifications' });
+            }
+        });
+
+        // Mark Notification as Read (PATCH /notifications/:id/read)
+        app.patch('/notifications/:id/read', verifyJWT, async (req, res) => {
+            try {
+                const { id } = req.params;
+                await notificationsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { read: true } }
+                );
+                res.send({ success: true });
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to mark as read' });
+            }
+        });
+
+        // Mark All Notifications as Read (PATCH /notifications/read-all)
+        app.patch('/notifications/read-all', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.tokenEmail;
+                await notificationsCollection.updateMany(
+                    { userEmail, read: false },
+                    { $set: { read: true } }
+                );
+                res.send({ success: true });
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to mark all as read' });
+            }
+        });
+
+        // Delete Notification (DELETE /notifications/:id)
+        app.delete('/notifications/:id', verifyJWT, async (req, res) => {
+            try {
+                const { id } = req.params;
+                await notificationsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send({ success: true });
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to delete notification' });
+            }
+        });
+
+  
+        // MESSAGING APIs
+     
+
+        // Start or Get Conversation (POST /conversations)
+        app.post('/conversations', verifyJWT, async (req, res) => {
+            try {
+                const { recipientEmail } = req.body;
+                const senderEmail = req.tokenEmail;
+
+                // Check if conversation already exists
+                const existing = await conversationsCollection.findOne({
+                    participants: { $all: [senderEmail, recipientEmail] }
+                });
+
+                if (existing) {
+                    return res.send(existing);
+                }
+
+                // Create new conversation
+                const conversation = {
+                    participants: [senderEmail, recipientEmail],
+                    lastMessage: null,
+                    lastMessageAt: new Date(),
+                    createdAt: new Date()
+                };
+
+                const result = await conversationsCollection.insertOne(conversation);
+                res.send({ ...conversation, _id: result.insertedId });
+            } catch (error) {
+                console.error('Error creating conversation:', error);
+                res.status(500).send({ message: 'Failed to start conversation' });
+            }
+        });
+
+        // Get My Conversations (GET /my-conversations)
+        app.get('/my-conversations', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.tokenEmail;
+                const conversations = await conversationsCollection
+                    .find({ participants: userEmail })
+                    .sort({ lastMessageAt: -1 })
+                    .toArray();
+
+                // Populate other participant info
+                for (let conv of conversations) {
+                    const otherEmail = conv.participants.find(p => p !== userEmail);
+                    const otherUser = await usersCollection.findOne({ email: otherEmail });
+                    conv.otherParticipant = otherUser ? {
+                        email: otherUser.email,
+                        displayName: otherUser.displayName || otherUser.name,
+                        photoURL: otherUser.photoURL
+                    } : { email: otherEmail };
+                }
+
+                res.send(conversations);
+            } catch (error) {
+                console.error('Error fetching conversations:', error);
+                res.status(500).send({ message: 'Failed to fetch conversations' });
+            }
+        });
+
+        // Send Message (POST /messages)
+        app.post('/messages', verifyJWT, async (req, res) => {
+            try {
+                const { conversationId, content } = req.body;
+                const senderEmail = req.tokenEmail;
+
+                const message = {
+                    conversationId,
+                    senderEmail,
+                    content,
+                    read: false,
+                    createdAt: new Date()
+                };
+
+                const result = await messagesCollection.insertOne(message);
+
+                // Update conversation's lastMessage
+                await conversationsCollection.updateOne(
+                    { _id: new ObjectId(conversationId) },
+                    { $set: { lastMessage: content, lastMessageAt: new Date() } }
+                );
+
+                // Create notification for recipient
+                const conv = await conversationsCollection.findOne({ _id: new ObjectId(conversationId) });
+                const recipientEmail = conv.participants.find(p => p !== senderEmail);
+
+                await notificationsCollection.insertOne({
+                    userEmail: recipientEmail,
+                    type: 'message',
+                    message: 'You have a new message',
+                    link: '/dashboard/messages',
+                    read: false,
+                    createdAt: new Date()
+                });
+
+                res.send({ ...message, _id: result.insertedId });
+            } catch (error) {
+                console.error('Error sending message:', error);
+                res.status(500).send({ message: 'Failed to send message' });
+            }
+        });
+
+        // Get Messages for a Conversation (GET /messages/:conversationId)
+        app.get('/messages/:conversationId', verifyJWT, async (req, res) => {
+            try {
+                const { conversationId } = req.params;
+                const messages = await messagesCollection
+                    .find({ conversationId })
+                    .sort({ createdAt: 1 })
+                    .toArray();
+                res.send(messages);
+            } catch (error) {
+                console.error('Error fetching messages:', error);
+                res.status(500).send({ message: 'Failed to fetch messages' });
+            }
+        });
+
+        
+        // SCHEDULE/CALENDAR APIs
+      
+
+        // Create Schedule (POST /schedules) - Tutor creates for ongoing tuition
+        app.post('/schedules', verifyJWT, async (req, res) => {
+            try {
+                const { tuitionId, studentEmail, date, startTime, endTime, subject, notes } = req.body;
+                const tutorEmail = req.tokenEmail;
+
+                const schedule = {
+                    tuitionId,
+                    tutorEmail,
+                    studentEmail,
+                    date: new Date(date),
+                    startTime,
+                    endTime,
+                    subject,
+                    notes,
+                    status: 'scheduled',
+                    createdAt: new Date()
+                };
+
+                const result = await db.collection('schedules').insertOne(schedule);
+
+                // Notify student
+                await notificationsCollection.insertOne({
+                    userEmail: studentEmail,
+                    type: 'schedule',
+                    message: `New class scheduled for ${subject} on ${new Date(date).toLocaleDateString()}`,
+                    link: '/dashboard/student/calendar',
+                    read: false,
+                    createdAt: new Date()
+                });
+
+                res.send({ ...schedule, _id: result.insertedId });
+            } catch (error) {
+                console.error('Error creating schedule:', error);
+                res.status(500).send({ message: 'Failed to create schedule' });
+            }
+        });
+
+        // Get My Schedule (GET /my-schedule)
+        app.get('/my-schedule', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.tokenEmail;
+                const schedules = await db.collection('schedules')
+                    .find({ $or: [{ tutorEmail: userEmail }, { studentEmail: userEmail }] })
+                    .sort({ date: 1 })
+                    .toArray();
+                res.send(schedules);
+            } catch (error) {
+                console.error('Error fetching schedule:', error);
+                res.status(500).send({ message: 'Failed to fetch schedule' });
+            }
+        });
+
+        // Update Schedule (PATCH /schedules/:id)
+        app.patch('/schedules/:id', verifyJWT, async (req, res) => {
+            try {
+                const { id } = req.params;
+                const updates = req.body;
+                delete updates._id;
+
+                await db.collection('schedules').updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { ...updates, updatedAt: new Date() } }
+                );
+                res.send({ success: true });
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to update schedule' });
+            }
+        });
+
+        // Delete Schedule (DELETE /schedules/:id)
+        app.delete('/schedules/:id', verifyJWT, async (req, res) => {
+            try {
+                const { id } = req.params;
+                await db.collection('schedules').deleteOne({ _id: new ObjectId(id) });
+                res.send({ success: true });
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to delete schedule' });
+            }
+        });
+
+        
         // TUTOR APIs
-        // ---------------------------------------------------------
+       
 
         // Apply for Tuition (POST /apply-tuition)
         app.post('/apply-tuition', verifyJWT, verifyTUTOR, async (req, res) => {
@@ -367,12 +836,11 @@ async function run() {
                 return res.status(409).send({ message: 'Tuition already assigned to a tutor' });
             }
 
-            // 3. Create Application
+            //  Create Application
             const newApplication = {
                 tuitionId: tuitionId,
                 tutorEmail: tutorEmail,
-                studentEmail: tuition.studentId, // studentId stores email in this system
-                experience,
+                studentEmail: tuition.studentId, 
                 qualification,
                 expectedSalary,
                 status: 'pending',
@@ -385,15 +853,13 @@ async function run() {
         });
 
         // Get Active Tuition Posts (Strict Requirement: GET /tuitions-post)
-        // Only for Tutors, Only 'open' status.
+
         app.get('/tuitions-post', verifyJWT, verifyTUTOR, async (req, res) => {
-            // Strict requirements: Fetch only active/approved posts
-            // Frontend sends ?status=approved
+
             const status = req.query.status || 'approved';
             const query = { status: status };
 
-            // Support Filters
-            // Frontend sends 'class', 'subject', 'location'
+
             const { subject, location, class: classParam } = req.query;
 
             if (subject) query.subject = { $regex: subject, $options: 'i' };
@@ -407,11 +873,7 @@ async function run() {
             res.send(result);
         });
 
-        // Legacy/Generic GET /tuitions (Public) -> Should probably be disabled or point to new collection with restriction?
-        // User says "Tuition posts are not visible to other students anywhere".
-        // Public route allows anyone. I should RESTRICT this or changing it to use verifyTUTOR?
-        // To be safe and strict: I will leave generic /tuitions for now but make it return empty or restrict it. 
-        // Actually, I'll update the Tutor Dashboard to use `/tuitions-post` and ignore `/tuitions`.
+
 
 
         app.get('/my-applications', verifyJWT, verifyTUTOR, async (req, res) => {
@@ -421,9 +883,9 @@ async function run() {
             res.send(result);
         });
 
-        // ========================================
+
         // TEACHER ROLE REQUEST APIs
-        // ========================================
+   
 
         // 1. Create Role Request (POST /role-requests) - Student Only
         app.post('/role-requests', verifyJWT, verifySTUDENT, async (req, res) => {
@@ -456,14 +918,14 @@ async function run() {
             res.send(result);
         });
 
-        // 2. Get My Requests (GET /role-requests/my) - Student/Tutor
+        //  Get My Requests (GET /role-requests/my) - Student/Tutor
         app.get('/role-requests/my', verifyJWT, async (req, res) => {
             const email = req.tokenEmail;
             const result = await roleRequestsCollection.find({ userId: email }).sort({ created_at: -1 }).toArray();
             res.send(result);
         });
 
-        // 3. Get All Pending Requests (GET /role-requests) - Admin Only
+        //  Get All Pending Requests (GET /role-requests) - Admin Only
         app.get('/role-requests', verifyJWT, verifyADMIN, async (req, res) => {
             const status = req.query.status;
             let query = {};
@@ -473,7 +935,7 @@ async function run() {
             res.send(result);
         });
 
-        // 4. Admin Action: Approve/Reject (PATCH /role-requests/:id)
+        
         app.patch('/role-requests/:id', verifyJWT, verifyADMIN, async (req, res) => {
             const id = req.params.id;
             const { status, adminId } = req.body; // status: 'approved' | 'rejected'
@@ -489,9 +951,9 @@ async function run() {
                 );
 
                 if (userUpdate.modifiedCount === 0) {
-                    // Should not happen unless user deleted
-                    // Proceeding to update request status anyway or handle error?
-                    // Let's assume success for now, but log it.
+                  
+                 
+                  
                     console.warn(`User ${request.userEmail} not found while approving role.`);
                 }
             }
@@ -510,38 +972,33 @@ async function run() {
             res.send(result);
         });
 
-        // ========================================
-        // STUDENT APPLICATION MANAGEMENT & PAYMENT
-        // ========================================
 
-        // ========================================
+
+
         // STUDENT APPLICATION MANAGEMENT & PAYMENT
-        // ========================================
+
+
+    
+
+ 
 
         // Student Dashboard Stats (GET /student/dashboard-stats)
         app.get('/student/dashboard-stats', verifyJWT, verifySTUDENT, async (req, res) => {
             const email = req.tokenEmail;
 
             try {
-                // Total Applications (Where student is the sender or receiver? Assuming student receives applications for their tuitions?)
-                // Wait, "Student Applications" usually means applications *submitted* by the student?
-                // But in this app, STUDENTS POST TUITIONS and TUTORS APPLY.
-                // So "Student Dashboard" shows how many Tutors applied to THEIR posts.
-
-                // Let's count how many applications exist for tuitions posted by this student.
+ 
                 // 1. Get all tuition IDs by this student
                 const myTuitions = await tuitionsPostCollection.find({ studentId: email }).toArray();
                 const myTuitionIds = myTuitions.map(t => t._id.toString());
 
                 // 2. Count applications for these tuitions
+                // 2. Count applications for these tuitions
                 const totalApplicationsReceived = await applicationsCollection.countDocuments({
-                    tuitionId: { $in: myTuitionIds } // Incorrect, tuitionId is ObjectId usually, but let's check schema. In apply-tuition it casts to ObjectId.
-                    // Wait, in apply-tuition, tuitionId is stored as string from body? No: 'tuitionId: tuitionId' from body.
-                    // Let's assume string for now or check data.
-                    // Actually, simpler metric: Total Tuitions Posted
+                    tuitionId: { $in: myTuitionIds }
                 });
 
-                // Let's stick to simple metrics first requested by typical dashboards
+                
                 // 1. Total Tuitions Posted
                 const totalTuitions = await tuitionsPostCollection.countDocuments({ studentId: email });
 
@@ -556,7 +1013,7 @@ async function run() {
                     totalTuitions,
                     hiredTutors: hiredTwitorsCount,
                     totalSpent,
-                    totalApplications: 0 // Placeholder or calculate properly if needed
+                    totalApplications: 0 
                 });
 
             } catch (error) {
@@ -565,11 +1022,10 @@ async function run() {
             }
         });
 
-        // Phase 2: Fetch Applications for a Student (GET /student-applications/:studentId)
+        
         app.get('/student-applications/:studentId', verifyJWT, verifySTUDENT, async (req, res) => {
             const studentId = req.params.studentId;
-            // In our system, studentId is often the email. 
-            // Verify requested ID matches token to prevent spying
+ 
             if (studentId !== req.tokenEmail) {
                 return res.status(403).send({ message: 'Forbidden access' });
             }
@@ -599,7 +1055,7 @@ async function run() {
             res.send(result);
         });
 
-        // Phase 1: Submit Application (POST /tuition-application)
+    
         // Aliasing logic to support prompt requirement
         app.post('/tuition-application', verifyJWT, verifyTUTOR, async (req, res) => {
             const { tuitionId, message, expectedSalary, availability, experience } = req.body;
@@ -624,10 +1080,10 @@ async function run() {
                 tuitionId,
                 tutorEmail,
                 studentEmail: tuition.studentId,
-                message, // New Field
-                expectedSalary, // New Field
-                availability, // New Field
-                experience, // Keeping legacy support
+                message, 
+                expectedSalary, 
+                availability, 
+                experience, 
                 status: 'pending',
                 created_at: new Date()
             };
@@ -636,7 +1092,7 @@ async function run() {
             res.send({ success: true, ...result });
         });
 
-        // ALLIED & STRICT API Endpoints for Full Implementation Prompt
+
 
         // 1. GET Applications for Tuition (Strict: GET /applications/:tuitionId)
         app.get('/applications/:tuitionId', verifyJWT, verifySTUDENT, async (req, res) => {
@@ -662,7 +1118,7 @@ async function run() {
             res.send(result);
         });
 
-        // (Keeping legacy endpoint for backwards compatibility if needed, but the new one covers it)
+        
         // Get Applications for a Tuition (GET /applied-tutors/:tuitionId)
         app.get('/applied-tutors/:tuitionId', verifyJWT, verifySTUDENT, async (req, res) => {
             const tuitionId = req.params.tuitionId;
@@ -687,7 +1143,7 @@ async function run() {
         });
 
         // Process Demo Payment (POST /process-payment)
-        // ALIASING: GET /student/recent-activities
+
         app.get('/student/recent-activities', verifyJWT, verifySTUDENT, async (req, res) => {
             console.log("DEBUG: Hit /student/recent-activities");
             const email = req.tokenEmail;
@@ -883,9 +1339,9 @@ async function run() {
         });
 
 
-        // ---------------------------------------------------------
+
         // ADMIN APIs
-        // ---------------------------------------------------------
+  
 
         // Create Tuition Post (Strict Requirement: POST /tuitions-post)
         app.post('/tuitions-post', verifyJWT, verifySTUDENT, async (req, res) => {
@@ -909,76 +1365,94 @@ async function run() {
             res.send(result);
         });
 
-        // ...
-
-        // Duplicate route removed
 
 
-        // ...
-
+        // Verify Payment Success (POST /payment-success)
         app.post('/payment-success', verifyJWT, verifySTUDENT, async (req, res) => {
             const { sessionId } = req.body;
 
-            const session = await stripeClient.checkout.sessions.retrieve(sessionId);
+            try {
+                if (sessionId.startsWith('DEMO_')) {
+                    // DEMO FLOW
+                    const payment = await paymentsCollection.findOne({ transactionId: sessionId });
+                    if (payment) {
+                        return res.send({ success: true, message: 'Payment verified (Demo)', payment });
+                    } else {
+                        return res.send({ success: false, message: 'Payment not found in demo records' });
+                    }
+                } else {
+                    // STRIPE FLOW
+                    const session = await stripeClient.checkout.sessions.retrieve(sessionId);
 
-            if (session.payment_status === 'paid') {
-                const { tuitionId, tutorEmail, studentEmail, applicationId } = session.metadata;
-                const transactionId = session.payment_intent;
+                    if (session.payment_status === 'paid') {
+                        const { tuitionId, tutorEmail, studentEmail, applicationId } = session.metadata;
+                        const transactionId = session.payment_intent;
 
-                // Check for duplicate
-                const existingPayment = await paymentsCollection.findOne({ transactionId });
-                if (existingPayment) {
-                    return res.send({ message: 'Payment already recorded' });
+                        // Check for duplicate
+                        const existingPayment = await paymentsCollection.findOne({ transactionId });
+                        if (existingPayment) {
+                            return res.send({ message: 'Payment already recorded' });
+                        }
+
+                        // Record Payment
+                        const paymentRecord = {
+                            tuitionId,
+                            tutorEmail,
+                            studentEmail,
+                            transactionId,
+                            amount: session.amount_total / 100,
+                            currency: session.currency.toUpperCase(),
+                            status: 'paid', // Transaction status
+                            method: 'Stripe',
+                            created_at: new Date()
+                        };
+                        await paymentsCollection.insertOne(paymentRecord);
+
+                        // Database Updates
+                        await applicationsCollection.updateOne(
+                            { _id: new ObjectId(applicationId) },
+                            { $set: { status: 'approved', paymentId: transactionId } }
+                        );
+
+                        await tuitionsPostCollection.updateOne(
+                            { _id: new ObjectId(tuitionId) },
+                            { $set: { status: 'ongoing', assignedTutorId: tutorEmail, assignedTutorEmail: tutorEmail } }
+                        );
+
+                        await applicationsCollection.updateMany(
+                            {
+                                tuitionId: tuitionId,
+                                _id: { $ne: new ObjectId(applicationId) }
+                            },
+                            { $set: { status: 'rejected' } }
+                        );
+
+                        return res.send({ success: true, message: 'Payment verified, Tutor Hired.' });
+                    } else {
+                        return res.status(400).send({ success: false, message: 'Payment not successful' });
+                    }
                 }
-
-                // Record Payment
-                const paymentRecord = {
-                    tuitionId,
-                    tutorEmail,
-                    studentEmail,
-                    transactionId,
-                    amount: session.amount_total / 100,
-                    status: 'paid', // Transaction status
-                    created_at: new Date()
-                };
-                await paymentsCollection.insertOne(paymentRecord);
-
-                // Step 5 Database Updates:
-                // 1. Application: Status -> 'approved' (User req: "Approved")
-                await applicationsCollection.updateOne(
-                    { _id: new ObjectId(applicationId) },
-                    { $set: { status: 'approved', paymentId: transactionId } }
-                );
-
-                // 2. Tuition: Status -> 'ongoing' (User req: "Ongoing")
-                await tuitionsPostCollection.updateOne(
-                    { _id: new ObjectId(tuitionId) },
-                    { $set: { status: 'ongoing', assignedTutorId: tutorEmail } } // using email as ID ref
-                );
-
-                // 3. Reject All Other Applications for this Tuition (Optional but requested system logic)
-                await applicationsCollection.updateMany(
-                    {
-                        tuitionId: tuitionId,
-                        _id: { $ne: new ObjectId(applicationId) }
-                    },
-                    { $set: { status: 'rejected' } }
-                );
-
-                return res.send({ success: true, message: 'Payment verified, Tutor Hired (Approved), Tuition Ongoing.' });
-            } else {
-                return res.status(400).send({ success: false, message: 'Payment not successful' });
+            } catch (error) {
+                console.error("Payment Verification Error:", error);
+                res.status(500).send({ success: false, message: 'Verification failed' });
             }
         });
 
     } catch (error) {
+        dbStatus = "Failed";
+        dbError = error;
         console.error("MongoDB Connection Error:", error);
     }
 }
 
 // Root Route (Moved outside for better visibility)
 app.get('/', (req, res) => {
-    res.send('eTuitionBd Server is Running (Check logs for DB status)');
+    res.send({
+        status: 'Server Running',
+        dbStatus,
+        dbError: dbError ? dbError.message : null,
+        timestamp: new Date()
+    });
 });
 
 run().catch(console.dir);
