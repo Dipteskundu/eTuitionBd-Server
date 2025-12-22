@@ -31,14 +31,14 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 try {
     let serviceAccount;
 
-    // 1. Try to load from local file first (Local Development)
+    //  Try to load from local file first (Local Development)
     try {
         serviceAccount = require('./assingment-11-service-key.json');
     } catch (e) {
         // Fallback to environment variable if file is missing
     }
 
-    // 2. Fallback to Environment Variable (Production/Vercel)
+    //  Fallback to Environment Variable (Production/Vercel)
     if (!serviceAccount && process.env.FB_SERVICE_KEY) {
         try {
             const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
@@ -83,7 +83,8 @@ let dbError = null;
 // Database Collections (Global Scope)
 let usersCollection, tuitionsPostCollection, applicationsCollection, paymentsCollection,
     roleRequestsCollection, reviewsCollection, bookmarksCollection,
-    notificationsCollection, conversationsCollection, messagesCollection;
+    notificationsCollection, conversationsCollection, messagesCollection,
+    schedulesCollection;
 
 async function connectDB() {
     try {
@@ -103,6 +104,7 @@ async function connectDB() {
         notificationsCollection = db.collection("notifications");
         conversationsCollection = db.collection("conversations");
         messagesCollection = db.collection("messages");
+        schedulesCollection = db.collection("schedules");
     } catch (error) {
         dbStatus = "Failed";
         dbError = error;
@@ -222,6 +224,18 @@ app.delete('/user/:id', verifyJWT, verifyADMIN, async (req, res) => {
     const id = req.params.id;
     const query = { _id: new ObjectId(id) };
     const result = await usersCollection.deleteOne(query);
+    res.send(result);
+});
+
+// Update User Role (PATCH /update-role/:id) - Used by Admin ManageUsers
+app.patch('/update-role/:id', verifyJWT, verifyADMIN, async (req, res) => {
+    const id = req.params.id;
+    const { role } = req.body;
+    const filter = { _id: new ObjectId(id) };
+    const updateDoc = {
+        $set: { role: role }
+    };
+    const result = await usersCollection.updateOne(filter, updateDoc);
     res.send(result);
 });
 
@@ -358,6 +372,22 @@ app.get('/tutors', async (req, res) => {
     }
 });
 
+// Get Single Tutor Details (GET /tutors/:id) - Public Access
+app.get('/tutors/:id', async (req, res) => {
+    try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id), role: 'tutor' };
+        const result = await usersCollection.findOne(query);
+        if (!result) {
+            return res.status(404).send({ message: 'Tutor not found' });
+        }
+        res.send(result);
+    } catch (error) {
+        console.error('Error fetching tutor details:', error);
+        res.status(500).send({ message: 'Failed to fetch tutor details' });
+    }
+});
+
 // Get Public Generic Tuitions (GET /tuitions) - Public Access
 app.get('/tuitions', async (req, res) => {
     try {
@@ -369,7 +399,7 @@ app.get('/tuitions', async (req, res) => {
 
         const query = { status: 'approved' };
 
-        // 1. Search (Subject or Location)
+        //  Search (Subject or Location)
         if (search) {
             query.$or = [
                 { subject: { $regex: search, $options: 'i' } },
@@ -377,12 +407,12 @@ app.get('/tuitions', async (req, res) => {
             ];
         }
 
-        // 2. Advanced Filters
+        //  Advanced Filters
         if (subject) query.subject = { $regex: subject, $options: 'i' };
         if (location) query.location = { $regex: location, $options: 'i' };
         if (stuClass) query.class = { $regex: stuClass, $options: 'i' };
 
-        // 3. Sorting
+        //  Sorting
         let sortOptions = { created_at: -1 }; // Default: Newest
         if (sort === 'price_asc') {
             sortOptions = { salary: 1 };
@@ -435,26 +465,30 @@ app.post('/reviews', verifyJWT, verifySTUDENT, async (req, res) => {
         const { tutorEmail, rating, comment, tuitionId } = req.body;
         const studentEmail = req.tokenEmail;
 
-        // Check if student has a completed/ongoing tuition with this tutor
-        const hasTuition = await paymentsCollection.findOne({
+        // Check if student has a payment record with this tutor
+        const payment = await paymentsCollection.findOne({
             studentEmail,
-            tutorEmail,
-            status: 'paid'
+            tutorEmail
         });
 
-        if (!hasTuition) {
-            return res.status(403).send({ message: 'You can only review tutors you have hired' });
+        if (!payment || payment.status !== 'paid') {
+            return res.status(403).send({ message: 'Only students with completed payments can review this tutor' });
         }
 
         // Check if already reviewed this tutor
         const existingReview = await reviewsCollection.findOne({ studentEmail, tutorEmail });
         if (existingReview) {
-            return res.status(409).send({ message: 'You have already reviewed this tutor' });
+            return res.status(409).send({ message: 'Focus on your studies! You have already reviewed this tutor.' });
         }
+
+        // Get student details for the review
+        const student = await usersCollection.findOne({ email: studentEmail });
 
         const review = {
             tutorEmail,
             studentEmail,
+            reviewerName: student?.displayName || student?.name || 'Anonymous',
+            reviewerPhoto: student?.photoURL || 'https://i.ibb.co/MBtH413/unknown-user.jpg',
             tuitionId,
             rating: Number(rating),
             comment,
@@ -640,14 +674,16 @@ app.delete('/notifications/:id', verifyJWT, async (req, res) => {
 
 
 // Start or Get Conversation (POST /conversations)
+// Start or Get Conversation (POST /conversations)
 app.post('/conversations', verifyJWT, async (req, res) => {
     try {
         const { recipientEmail } = req.body;
-        const senderEmail = req.tokenEmail;
+        const senderEmail = req.tokenEmail.toLowerCase();
+        const recipientEmailLower = recipientEmail.toLowerCase();
 
-        // Check if conversation already exists
+        // Check if conversation already exists (case-insensitive by storing/querying lowercase)
         const existing = await conversationsCollection.findOne({
-            participants: { $all: [senderEmail, recipientEmail] }
+            participants: { $all: [senderEmail, recipientEmailLower] }
         });
 
         if (existing) {
@@ -656,7 +692,7 @@ app.post('/conversations', verifyJWT, async (req, res) => {
 
         // Create new conversation
         const conversation = {
-            participants: [senderEmail, recipientEmail],
+            participants: [senderEmail, recipientEmailLower],
             lastMessage: null,
             lastMessageAt: new Date(),
             createdAt: new Date()
@@ -666,27 +702,37 @@ app.post('/conversations', verifyJWT, async (req, res) => {
         res.send({ ...conversation, _id: result.insertedId });
     } catch (error) {
         console.error('Error creating conversation:', error);
-        res.status(500).send({ message: 'Failed to start conversation' });
+        res.status(500).send({ message: 'Failed to create conversation' });
     }
 });
+
 
 // Get My Conversations (GET /my-conversations)
 app.get('/my-conversations', verifyJWT, async (req, res) => {
     try {
-        const userEmail = req.tokenEmail;
+        const userEmail = req.tokenEmail.toLowerCase();
+
+        // Find conversations where user matches any participant (case-insensitive)
         const conversations = await conversationsCollection
-            .find({ participants: userEmail })
+            .find({ participants: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } })
             .sort({ lastMessageAt: -1 })
             .toArray();
 
         // Populate other participant info
         for (let conv of conversations) {
-            const otherEmail = conv.participants.find(p => p !== userEmail);
-            const otherUser = await usersCollection.findOne({ email: otherEmail });
+            // Find participant that is NOT the current user (case-insensitive)
+            const otherEmail = conv.participants.find(p => p.toLowerCase() !== userEmail);
+
+            // Fetch user details case-insensitively
+            const otherUser = await usersCollection.findOne({
+                email: { $regex: new RegExp(`^${otherEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+            });
+
             conv.otherParticipant = otherUser ? {
                 email: otherUser.email,
                 displayName: otherUser.displayName || otherUser.name,
-                photoURL: otherUser.photoURL
+                photoURL: otherUser.photoURL,
+                _id: otherUser._id
             } : { email: otherEmail };
         }
 
@@ -698,10 +744,11 @@ app.get('/my-conversations', verifyJWT, async (req, res) => {
 });
 
 // Send Message (POST /messages)
+// Send Message (POST /messages)
 app.post('/messages', verifyJWT, async (req, res) => {
     try {
         const { conversationId, content } = req.body;
-        const senderEmail = req.tokenEmail;
+        const senderEmail = req.tokenEmail.toLowerCase();
 
         const message = {
             conversationId,
@@ -721,16 +768,26 @@ app.post('/messages', verifyJWT, async (req, res) => {
 
         // Create notification for recipient
         const conv = await conversationsCollection.findOne({ _id: new ObjectId(conversationId) });
-        const recipientEmail = conv.participants.find(p => p !== senderEmail);
 
-        await notificationsCollection.insertOne({
-            userEmail: recipientEmail,
-            type: 'message',
-            message: 'You have a new message',
-            link: '/dashboard/messages',
-            read: false,
-            createdAt: new Date()
+        // Find recipient: The participant that is NOT the sender (case-insensitive)
+        const recipientEmail = conv.participants.find(p => p.toLowerCase() !== senderEmail);
+
+        // Get Sender Name for notification
+        const sender = await usersCollection.findOne({
+            email: { $regex: new RegExp(`^${senderEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
         });
+        const senderName = sender?.displayName || sender?.name || 'Someone';
+
+        if (recipientEmail) {
+            await notificationsCollection.insertOne({
+                userEmail: recipientEmail,
+                type: 'message',
+                message: `New message from ${senderName}`,
+                link: `/dashboard/messages?id=${conversationId}`, // Deep link to conversation
+                read: false,
+                createdAt: new Date()
+            });
+        }
 
         res.send({ ...message, _id: result.insertedId });
     } catch (error) {
@@ -758,33 +815,67 @@ app.get('/messages/:conversationId', verifyJWT, async (req, res) => {
 // SCHEDULE/CALENDAR APIs
 
 
-// Create Schedule (POST /schedules) - Tutor creates for ongoing tuition
+// Create Schedule (POST /schedules) - Tutor or Student creates for ongoing tuition
 app.post('/schedules', verifyJWT, async (req, res) => {
     try {
-        const { tuitionId, studentEmail, date, startTime, endTime, subject, notes } = req.body;
-        const tutorEmail = req.tokenEmail;
+        const { tuitionId, partnerEmail, date, startTime, endTime, subject, notes, meetingLink } = req.body;
+        const userEmail = req.tokenEmail;
+
+        // Verify the tuition and participants
+        const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
+        if (!tuition) return res.status(404).send({ message: 'Tuition not found' });
+
+        let studentEmail, tutorEmail;
+        const studentIdMatch = tuition.studentId?.toLowerCase() === userEmail.toLowerCase();
+        const tutorEmailMatch = tuition.assignedTutorEmail?.toLowerCase() === userEmail.toLowerCase() ||
+            tuition.assignedTutorId?.toLowerCase() === userEmail.toLowerCase();
+
+        if (studentIdMatch) {
+            // Initiator is student
+            studentEmail = userEmail;
+            tutorEmail = partnerEmail || tuition.assignedTutorEmail;
+        } else if (tutorEmailMatch) {
+            // Initiator is tutor
+            tutorEmail = userEmail;
+            studentEmail = partnerEmail || tuition.studentId;
+        } else {
+            return res.status(403).send({ message: 'You are not part of this tuition' });
+        }
+
+        // Get student and tutor names for better display (case-insensitive)
+        const student = await usersCollection.findOne({ email: { $regex: new RegExp(`^${studentEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+        const tutor = await usersCollection.findOne({ email: { $regex: new RegExp(`^${tutorEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
 
         const schedule = {
             tuitionId,
-            tutorEmail,
-            studentEmail,
+            tutorEmail: tutorEmail.toLowerCase(),
+            tutorName: tutor?.displayName || tutor?.name || 'Tutor',
+            studentEmail: studentEmail.toLowerCase(),
+            studentName: student?.displayName || student?.name || 'Student',
             date: new Date(date),
             startTime,
             endTime,
             subject,
             notes,
+            meetingLink: meetingLink || 'https://meet.google.com/',
             status: 'scheduled',
+            createdBy: userEmail.toLowerCase(),
+            creatorRole: (studentIdMatch ? 'student' : 'tutor'),
             createdAt: new Date()
         };
 
-        const result = await db.collection('schedules').insertOne(schedule);
+        const result = await schedulesCollection.insertOne(schedule);
 
-        // Notify student
+        // Notify the OTHER party
+        const isStudentCreator = userEmail.toLowerCase() === studentEmail.toLowerCase();
+        const recipientEmail = isStudentCreator ? tutorEmail : studentEmail;
+        const senderName = isStudentCreator ? (student?.displayName || student?.name) : (tutor?.displayName || tutor?.name);
+
         await notificationsCollection.insertOne({
-            userEmail: studentEmail,
+            userEmail: recipientEmail.toLowerCase(),
             type: 'schedule',
-            message: `New class scheduled for ${subject} on ${new Date(date).toLocaleDateString()}`,
-            link: '/dashboard/student/calendar',
+            message: `New class: ${subject} with ${senderName} on ${new Date(date).toLocaleDateString()}`,
+            link: isStudentCreator ? '/dashboard/tutor/calendar' : '/dashboard/student/calendar',
             read: false,
             createdAt: new Date()
         });
@@ -796,12 +887,84 @@ app.post('/schedules', verifyJWT, async (req, res) => {
     }
 });
 
-// Get My Schedule (GET /my-schedule)
+// Get My Students/Tuitions (GET /tutor/my-students) - Used for scheduling
+app.get('/tutor/my-students', verifyJWT, verifyTUTOR, async (req, res) => {
+    try {
+        const email = req.tokenEmail;
+        const tuitions = await tuitionsPostCollection.find({
+            $or: [
+                { assignedTutorEmail: email },
+                { assignedTutorId: email }
+            ]
+        }).toArray();
+
+        // Enrich with student names
+        for (let t of tuitions) {
+            const student = await usersCollection.findOne({ email: t.studentId });
+            t.studentName = student?.displayName || student?.name || 'Student';
+            t.studentEmail = t.studentId;
+        }
+
+        res.send(tuitions);
+    } catch (error) {
+        res.status(500).send({ message: 'Failed to fetch students' });
+    }
+});
+
+// Get My Tutors (GET /student/my-tutors) - Used for scheduling
+app.get('/student/my-tutors', verifyJWT, verifySTUDENT, async (req, res) => {
+    try {
+        const email = req.tokenEmail;
+        const tuitions = await tuitionsPostCollection.find({
+            studentId: email,
+            assignedTutorEmail: { $exists: true }
+        }).toArray();
+
+        // Enrich with tutor names
+        for (let t of tuitions) {
+            const tutor = await usersCollection.findOne({ email: t.assignedTutorEmail });
+            t.tutorName = tutor?.displayName || tutor?.name || 'Tutor';
+            t.tutorEmail = t.assignedTutorEmail;
+        }
+
+        res.send(tuitions);
+    } catch (error) {
+        res.status(500).send({ message: 'Failed to fetch tutors' });
+    }
+});
+// Get My Schedule (GET /my-schedule) - Strict One-to-One Visibility
 app.get('/my-schedule', verifyJWT, async (req, res) => {
     try {
-        const userEmail = req.tokenEmail;
-        const schedules = await db.collection('schedules')
-            .find({ $or: [{ tutorEmail: userEmail }, { studentEmail: userEmail }] })
+        const userEmail = req.tokenEmail.toLowerCase();
+        const user = await usersCollection.findOne({
+            email: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+        });
+
+        if (!user) return res.status(404).send({ message: 'User not found' });
+
+        const role = user.role?.toLowerCase();
+        let query = {};
+
+        if (role === 'student') {
+            // Rule: Student sees schedules matching their email
+            query = { studentEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } };
+        } else if (role === 'tutor' || role === 'teacher') {
+            // Rule: Tutor/Teacher sees schedules matching their email
+            query = { tutorEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } };
+        } else if (role === 'admin') {
+            // Admin sees their own involvements
+            query = {
+                $or: [
+                    { studentEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+                    { tutorEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+                ]
+            };
+        } else {
+            return res.status(403).send({ message: 'Forbidden: Unauthorized role access' });
+        }
+
+        const schedules = await schedulesCollection
+            .find(query)
             .sort({ date: 1 })
             .toArray();
         res.send(schedules);
@@ -815,10 +978,18 @@ app.get('/my-schedule', verifyJWT, async (req, res) => {
 app.patch('/schedules/:id', verifyJWT, async (req, res) => {
     try {
         const { id } = req.params;
+        const userEmail = req.tokenEmail;
         const updates = req.body;
         delete updates._id;
 
-        await db.collection('schedules').updateOne(
+        const schedule = await schedulesCollection.findOne({ _id: new ObjectId(id) });
+        if (!schedule) return res.status(404).send({ message: 'Schedule not found' });
+
+        if (schedule.createdBy?.toLowerCase() !== userEmail.toLowerCase()) {
+            return res.status(403).send({ message: 'Forbidden: Only the creator can update this' });
+        }
+
+        await schedulesCollection.updateOne(
             { _id: new ObjectId(id) },
             { $set: { ...updates, updatedAt: new Date() } }
         );
@@ -828,13 +999,27 @@ app.patch('/schedules/:id', verifyJWT, async (req, res) => {
     }
 });
 
-// Delete Schedule (DELETE /schedules/:id)
+// Delete Schedule (DELETE /schedules/:id) - Creator-Only Permission
 app.delete('/schedules/:id', verifyJWT, async (req, res) => {
     try {
         const { id } = req.params;
-        await db.collection('schedules').deleteOne({ _id: new ObjectId(id) });
-        res.send({ success: true });
+        const userEmail = req.tokenEmail.toLowerCase();
+
+        const schedule = await schedulesCollection.findOne({ _id: new ObjectId(id) });
+        if (!schedule) return res.status(404).send({ message: 'Schedule not found' });
+
+        // Rule: Only allow delete if currentUserId === createdBy
+        if (schedule.createdBy.toLowerCase() !== userEmail) {
+            return res.status(403).send({
+                success: false,
+                message: 'Forbidden: Only the creator of this schedule can delete it'
+            });
+        }
+
+        const result = await schedulesCollection.deleteOne({ _id: new ObjectId(id) });
+        res.send({ success: true, ...result });
     } catch (error) {
+        console.error('Error deleting schedule:', error);
         res.status(500).send({ message: 'Failed to delete schedule' });
     }
 });
@@ -892,7 +1077,10 @@ app.post('/apply-tuition', verifyJWT, verifyTUTOR, async (req, res) => {
 app.get('/tuitions-post', verifyJWT, verifyTUTOR, async (req, res) => {
 
     const status = req.query.status || 'approved';
-    const query = { status: status };
+    const query = {
+        status: status,
+        assignedTutorEmail: { $exists: false } // Only show tuitions that haven't been assigned yet
+    };
 
 
     const { subject, location, class: classParam } = req.query;
@@ -1023,32 +1211,35 @@ app.get('/student/dashboard-stats', verifyJWT, verifySTUDENT, async (req, res) =
 
     try {
 
-        // 1. Get all tuition IDs by this student
+        // Get all tuition IDs by this student
         const myTuitions = await tuitionsPostCollection.find({ studentId: email }).toArray();
         const myTuitionIds = myTuitions.map(t => t._id.toString());
 
-        // 2. Count applications for these tuitions
-        // 2. Count applications for these tuitions
+        //  Count applications for these tuitions
+        
         const totalApplicationsReceived = await applicationsCollection.countDocuments({
             tuitionId: { $in: myTuitionIds }
         });
 
 
-        // 1. Total Tuitions Posted
+        //  Total Tuitions Posted
         const totalTuitions = await tuitionsPostCollection.countDocuments({ studentId: email });
 
-        // 2. Total Hired Tutors (Assigned)
-        const hiredTwitorsCount = await tuitionsPostCollection.countDocuments({ studentId: email, status: 'ongoing' }); // or assignedTutorEmail exists
+        //  Total Hired Tutors (Assigned)
+        const hiredTutorsCount = await tuitionsPostCollection.countDocuments({
+            studentId: email,
+            assignedTutorEmail: { $exists: true }
+        });
 
-        // 3. Total Spending
+        //  Total Spending
         const payments = await paymentsCollection.find({ studentEmail: email }).toArray();
         const totalSpent = payments.reduce((sum, p) => sum + p.amount, 0);
 
         res.send({
             totalTuitions,
-            hiredTutors: hiredTwitorsCount,
+            activeTuitions: hiredTutorsCount,
             totalSpent,
-            totalApplications: 0
+            totalApplicationsReceived
         });
 
     } catch (error) {
@@ -1105,7 +1296,7 @@ app.post('/tuition-application', verifyJWT, verifyTUTOR, async (req, res) => {
         return res.status(409).send({ message: 'Already applied' });
     }
 
-    // 2. Get Tuition Details
+    // Get Tuition Details
     const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
     if (!tuition) return res.status(404).send({ message: 'Tuition not found' });
     if (tuition.status !== 'approved') return res.status(403).send({ message: 'Tuition is not open' });
@@ -1129,7 +1320,7 @@ app.post('/tuition-application', verifyJWT, verifyTUTOR, async (req, res) => {
 
 
 
-// 1. GET Applications for Tuition (Strict: GET /applications/:tuitionId)
+// GET Applications for Tuition (Strict: GET /applications/:tuitionId)
 app.get('/applications/:tuitionId', verifyJWT, verifySTUDENT, async (req, res) => {
     const tuitionId = req.params.tuitionId;
     const query = { tuitionId: tuitionId };
@@ -1146,7 +1337,7 @@ app.get('/applications/:tuitionId', verifyJWT, verifySTUDENT, async (req, res) =
     res.send(result);
 });
 
-// 2. DELETE Application (Strict: DELETE /applications/:id)
+// DELETE Application (Strict: DELETE /applications/:id)
 app.delete('/applications/:id', verifyJWT, verifySTUDENT, async (req, res) => {
     const id = req.params.id;
     const result = await applicationsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -1217,10 +1408,10 @@ app.post('/process-payment', verifyJWT, verifySTUDENT, async (req, res) => {
         { $set: { status: 'accepted' } }
     );
 
-    // 3. Close the Tuition Post and Assign Tutor
+    // 3. Assign Tutor
     await tuitionsPostCollection.updateOne(
         { _id: new ObjectId(tuitionId) },
-        { $set: { status: 'closed', assignedTutorEmail: tutorEmail } }
+        { $set: { assignedTutorEmail: tutorEmail } }
     );
 
     res.send({ success: true, paymentId: paymentResult.insertedId });
@@ -1258,7 +1449,7 @@ app.post('/payments/demo', verifyJWT, verifySTUDENT, async (req, res) => {
     // 4. Close Tuition and Assign Tutor
     await tuitionsPostCollection.updateOne(
         { _id: new ObjectId(tuitionId) },
-        { $set: { status: 'ongoing', assignedTutorEmail: tutorEmail, assignedTutorId: tutorEmail } }
+        { $set: { assignedTutorEmail: tutorEmail, assignedTutorId: tutorEmail } }
     );
 
     // 5. Reject other applications for this tuition
@@ -1395,8 +1586,30 @@ app.post('/tuitions-post', verifyJWT, verifySTUDENT, async (req, res) => {
 // Get My Tuitions (Updated to use tuitions-post)
 app.get('/my-tuitions', verifyJWT, verifySTUDENT, async (req, res) => {
     const email = req.tokenEmail;
-    const query = { studentEmail: email };
+    const query = { studentId: email };
     const result = await tuitionsPostCollection.find(query).toArray();
+    res.send(result);
+});
+
+// Update My Tuition Post (PUT /tuition/:id)
+app.put('/tuition/:id', verifyJWT, verifySTUDENT, async (req, res) => {
+    const id = req.params.id;
+    const email = req.tokenEmail;
+    const updatedData = req.body;
+    delete updatedData._id; // Prevent updating ID
+
+    const filter = { _id: new ObjectId(id), studentId: email };
+    const updateDoc = {
+        $set: {
+            ...updatedData,
+            updated_at: new Date()
+        }
+    };
+
+    const result = await tuitionsPostCollection.updateOne(filter, updateDoc);
+    if (result.matchedCount === 0) {
+        return res.status(404).send({ message: 'Tuition not found or unauthorized' });
+    }
     res.send(result);
 });
 
@@ -1451,7 +1664,7 @@ app.post('/payment-success', verifyJWT, verifySTUDENT, async (req, res) => {
 
                 await tuitionsPostCollection.updateOne(
                     { _id: new ObjectId(tuitionId) },
-                    { $set: { status: 'ongoing', assignedTutorId: tutorEmail, assignedTutorEmail: tutorEmail } }
+                    { $set: { assignedTutorId: tutorEmail, assignedTutorEmail: tutorEmail } }
                 );
 
                 await applicationsCollection.updateMany(
