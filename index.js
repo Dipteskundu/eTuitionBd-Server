@@ -164,13 +164,6 @@ app.get('/', (req, res) => {
 });
 
 
-//    SERVER START
-
-app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-});
-
-
 // MIDDLEWARE: Check Database Connection
 app.use((req, res, next) => {
     if (req.path === '/' || req.path === '/health') return next();
