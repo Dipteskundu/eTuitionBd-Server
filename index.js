@@ -12,6 +12,7 @@ const port = process.env.PORT || 5000;
 app.use(cors({
     origin: [
         process.env.CLIENT_DOMAIN,
+        'https://etuitionbd-the-best-tuition-media.netlify.app',
         'http://localhost:5173',
         'http://localhost:5174',
         'http://127.0.0.1:5173',
@@ -1225,7 +1226,7 @@ app.get('/student/dashboard-stats', verifyJWT, verifySTUDENT, async (req, res) =
         const myTuitionIds = myTuitions.map(t => t._id.toString());
 
         //  Count applications for these tuitions
-        
+
         const totalApplicationsReceived = await applicationsCollection.countDocuments({
             tuitionId: { $in: myTuitionIds }
         });
