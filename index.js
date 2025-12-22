@@ -8,7 +8,7 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
+//    Middleware
 app.use(cors({
     origin: [
         process.env.CLIENT_DOMAIN,
@@ -16,50 +16,59 @@ app.use(cors({
         'http://localhost:5174',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174'
-    ],
+    ].filter(Boolean),
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']
 }));
+
 app.use(express.json());
 
 
-// Stripe
+//    Stripe
+
+if (!process.env.STRIPE_SECRET_KEY) {
+    console.error('STRIPE_SECRET_KEY is missing');
+    process.exit(1);
+}
+
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 
 
-// Firebase Admin
+//    Firebase Admin (Render Safe)
+
 try {
-    let serviceAccount;
+    let serviceAccount = null;
 
-    //  Try to load from local file first (Local Development)
-    try {
-        serviceAccount = require('./assingment-11-service-key.json');
-    } catch (e) {
-        // Fallback to environment variable if file is missing
-    }
-
-    //  Fallback to Environment Variable (Production/Vercel)
-    if (!serviceAccount && process.env.FB_SERVICE_KEY) {
+    // Local development (file exists locally only)
+    if (process.env.NODE_ENV !== 'production') {
         try {
-            const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
-            serviceAccount = JSON.parse(decoded);
-        } catch (e) {
-            console.error("Error parsing FB_SERVICE_KEY env var:", e.message);
+            serviceAccount = require('./assingment-11-service-key.json');
+            console.log('Firebase key loaded from local file');
+        } catch {
+            console.warn('Local Firebase key file not found');
         }
     }
 
-    if (serviceAccount) {
-        if (admin.apps.length === 0) {
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccount)
-            });
-        }
-        console.log("Firebase Admin Initialized");
-    } else {
-        console.error("Firebase Admin NOT Initialized: Missing service key file or FB_SERVICE_KEY env var");
+    // Production (Render Environment Variable)
+    if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT) {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        console.log('Firebase key loaded from environment variable');
     }
+
+    if (!serviceAccount) {
+        throw new Error('Firebase service account not found');
+    }
+
+    if (!admin.apps.length) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+    }
+
+    console.log('Firebase Admin initialized successfully');
 } catch (error) {
-    console.error("Firebase Admin Init Error:", error.message);
+    console.error('Firebase Admin initialization failed:', error.message);
+    process.exit(1);
 }
 
 // MongoDB Connection
