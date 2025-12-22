@@ -8,7 +8,24 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-//    Middleware
+
+//    COOP / COEP FIX (MUST be before routes)
+
+app.use((req, res, next) => {
+    res.setHeader(
+        'Cross-Origin-Opener-Policy',
+        'same-origin-allow-popups'
+    );
+    res.setHeader(
+        'Cross-Origin-Embedder-Policy',
+        'unsafe-none'
+    );
+    next();
+});
+
+
+//    CORS CONFIG
+
 app.use(cors({
     origin: [
         process.env.CLIENT_DOMAIN,
@@ -25,7 +42,7 @@ app.use(cors({
 app.use(express.json());
 
 
-//    Stripe
+//     STRIPE
 
 if (!process.env.STRIPE_SECRET_KEY) {
     console.error('STRIPE_SECRET_KEY is missing');
@@ -35,12 +52,12 @@ if (!process.env.STRIPE_SECRET_KEY) {
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 
 
-//    Firebase Admin (Render Safe)
+//    FIREBASE ADMIN (Render / Local Safe)
 
 try {
     let serviceAccount = null;
 
-    // Local development (file exists locally only)
+    // Local development
     if (process.env.NODE_ENV !== 'production') {
         try {
             serviceAccount = require('./assingment-11-service-key.json');
@@ -50,7 +67,7 @@ try {
         }
     }
 
-    // Production (Render Environment Variable)
+    // Production (ENV variable)
     if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT) {
         serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
         console.log('Firebase key loaded from environment variable');
@@ -72,7 +89,9 @@ try {
     process.exit(1);
 }
 
-// MongoDB Connection
+
+//    ✅ MONGODB CONNECTION
+
 const uri = process.env.MONGODB_URI;
 
 const client = new MongoClient(uri, {
@@ -86,43 +105,71 @@ const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 30000
 });
 
-// Connection Status
-let dbStatus = "Initializing...";
+// DB status
+let dbStatus = 'Initializing...';
 let dbError = null;
 
-// Database Collections (Global Scope)
-let usersCollection, tuitionsPostCollection, applicationsCollection, paymentsCollection,
-    roleRequestsCollection, reviewsCollection, bookmarksCollection,
-    notificationsCollection, conversationsCollection, messagesCollection,
+// Collections
+let usersCollection,
+    tuitionsPostCollection,
+    applicationsCollection,
+    paymentsCollection,
+    roleRequestsCollection,
+    reviewsCollection,
+    bookmarksCollection,
+    notificationsCollection,
+    conversationsCollection,
+    messagesCollection,
     schedulesCollection;
 
 async function connectDB() {
     try {
-        dbStatus = "Connecting...";
+        dbStatus = 'Connecting...';
         await client.connect();
-        dbStatus = "Connected";
-        console.log("MongoDB Connected Successfully");
+        dbStatus = 'Connected';
 
-        const db = client.db("tuitionDB");
-        usersCollection = db.collection("users");
-        tuitionsPostCollection = db.collection("tuitions-post");
-        applicationsCollection = db.collection("tutorApplications");
-        paymentsCollection = db.collection("payments");
-        roleRequestsCollection = db.collection("teacherRoleRequests");
-        reviewsCollection = db.collection("reviews");
-        bookmarksCollection = db.collection("bookmarks");
-        notificationsCollection = db.collection("notifications");
-        conversationsCollection = db.collection("conversations");
-        messagesCollection = db.collection("messages");
-        schedulesCollection = db.collection("schedules");
+        console.log('MongoDB Connected Successfully');
+
+        const db = client.db('tuitionDB');
+        usersCollection = db.collection('users');
+        tuitionsPostCollection = db.collection('tuitions-post');
+        applicationsCollection = db.collection('tutorApplications');
+        paymentsCollection = db.collection('payments');
+        roleRequestsCollection = db.collection('teacherRoleRequests');
+        reviewsCollection = db.collection('reviews');
+        bookmarksCollection = db.collection('bookmarks');
+        notificationsCollection = db.collection('notifications');
+        conversationsCollection = db.collection('conversations');
+        messagesCollection = db.collection('messages');
+        schedulesCollection = db.collection('schedules');
+
     } catch (error) {
-        dbStatus = "Failed";
+        dbStatus = 'Failed';
         dbError = error;
-        console.error("MongoDB Connection Error:", error);
+        console.error('MongoDB Connection Error:', error);
     }
 }
 
-connectDB().catch(console.dir);
+connectDB();
+
+
+//    ✅ BASIC HEALTH CHECK ROUTE
+
+app.get('/', (req, res) => {
+    res.json({
+        status: 'Server is running',
+        database: dbStatus,
+        error: dbError ? dbError.message : null
+    });
+});
+
+
+//    SERVER START
+
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+});
+
 
 // MIDDLEWARE: Check Database Connection
 app.use((req, res, next) => {
