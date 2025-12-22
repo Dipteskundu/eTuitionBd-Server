@@ -30,6 +30,7 @@ app.use(cors({
     origin: [
         process.env.CLIENT_DOMAIN,
         'https://etuitionbd-the-best-tuition-media.netlify.app',
+        'https://symphonious-sherbet-5b5c9e.netlify.app',
         'http://localhost:5173',
         'http://localhost:5174',
         'http://127.0.0.1:5173',
@@ -70,7 +71,13 @@ try {
     // Production (ENV variable)
     if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT) {
         serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        console.log('Firebase key loaded from environment variable');
+        console.log('Firebase key loaded from FIREBASE_SERVICE_ACCOUNT');
+    }
+
+    if (!serviceAccount && process.env.FB_SERVICE_KEY) {
+        const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('ascii');
+        serviceAccount = JSON.parse(decoded);
+        console.log('Firebase key loaded from FB_SERVICE_KEY');
     }
 
     if (!serviceAccount) {
