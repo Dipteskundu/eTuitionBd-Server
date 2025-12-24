@@ -1494,9 +1494,9 @@ app.post('/create-checkout-session', verifyFBToken, verifySTUDENT, catchAsync(as
             studentEmail,
             applicationId
         },
-        // Using SITE_DOMAIN from environment variables
-        success_url: `${process.env.SITE_DOMAIN}/dashboard/student/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/student/applications`,
+        // Dynamically get the frontend URL from the request origin
+        success_url: `${req.get('origin')}/dashboard/student/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${req.get('origin')}/dashboard/student/applications`,
     });
 
     res.send({ id: session.id, url: session.url });
@@ -1788,7 +1788,7 @@ async function startServer() {
         await connectDB();
         app.listen(port, () => {
             console.log(`eTuitionBd Server is running on port ${port}`);
-            console.log(`Allowed Origins: ${allowedOrigins.join(', ')}`);
+            console.log(`CORS Policy: Open (All Origins Allowed)`);
         });
     } catch (error) {
         console.error('Server startup failed:', error);
