@@ -6,13 +6,12 @@ const stripe = require('stripe');
 require('dotenv').config();
 
 // 1. ENVIRONMENT VALIDATION
-const requiredEnvVars = ['MONGODB_URI', 'FIREBASE_SERVICE_ACCOUNT', 'STRIPE_SECRET_KEY', 'CLIENT_DOMAIN'];
+const requiredEnvVars = ['MONGODB_URI', 'FB_SERVICE_KEY', 'STRIPE_SECRET_KEY'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
 if (missingEnvVars.length > 0) {
     console.error(`CRITICAL ERROR: Missing environment variables: ${missingEnvVars.join(', ')}`);
-    // On Render, we should let the app start but fail health check if vars are missing
-    // or exit if they are absolutely required for startup.
+    
     process.exit(1);
 }
 
@@ -44,37 +43,8 @@ app.use((req, res, next) => {
     next();
 });
 
-// 4. CORS CONFIG
-const allowedOrigins = [
-    process.env.CLIENT_DOMAIN,
-    'https://etuitionbd-the-best-tuition-media.netlify.app',
-    'https://symphonious-sherbet-5b5c9e.netlify.app',
-    'http://localhost:5173',
-    'http://localhost:5174'
-].filter(Boolean);
-
-app.use(cors({
-    origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl)
-        if (!origin) return callback(null, true);
-
-        const isAllowed = allowedOrigins.includes(origin) ||
-            origin.endsWith('.netlify.app') ||
-            origin.endsWith('.vercel.app'); // Added Vercel just in case
-
-        if (isAllowed) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS blocked for origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
-}));
-
-// Handle OPTIONS preflight explicitly if needed (though cors middleware does this)
+// 4. CORS CONFIG (Allow All Origins)
+app.use(cors());
 app.options('*', cors());
 
 app.use(express.json());
@@ -85,7 +55,7 @@ const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 // 6. FIREBASE ADMIN INITIALIZATION
 try {
     let serviceAccount;
-    const saEnv = process.env.FIREBASE_SERVICE_ACCOUNT;
+    const saEnv = process.env.FB_SERVICE_KEY;
 
     if (saEnv.startsWith('{')) {
         serviceAccount = JSON.parse(saEnv);
@@ -103,8 +73,7 @@ try {
     console.log('Firebase Admin initialized successfully');
 } catch (error) {
     console.error('Firebase Admin initialization failed:', error.message);
-    // Don't exit here, let health check catch it if we want the app to stay up for debugging,
-    // but usually Render prefers a crash so it can restart.
+
     process.exit(1);
 }
 
@@ -210,6 +179,9 @@ const verifyJWT = async (req, res, next) => {
     try {
         const decodedToken = await admin.auth().verifyIdToken(token);
         req.decoded = decodedToken;
+        // Standardized to decoded_email as per user requirement
+        req.decoded_email = decodedToken.email;
+        // Keep backward compatibility for existing code
         req.tokenEmail = decodedToken.email;
         next();
     } catch (error) {
@@ -1483,6 +1455,40 @@ app.post('/process-payment', verifyJWT, verifySTUDENT, async (req, res) => {
 
     res.send({ success: true, paymentId: paymentResult.insertedId });
 });
+// CREATE STRIPE CHECKOUT SESSION
+app.post('/create-checkout-session', verifyJWT, verifySTUDENT, catchAsync(async (req, res) => {
+    const { amount, tuitionId, tutorEmail, applicationId, subject } = req.body;
+    const studentEmail = req.decoded_email;
+
+    const session = await stripeClient.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [
+            {
+                price_data: {
+                    currency: 'bdt',
+                    product_data: {
+                        name: subject || 'Tuition Fee Payment',
+                        description: `Payment for tuition: ${tuitionId}`,
+                    },
+                    unit_amount: Math.round(amount * 100), // Amount in cents/paisa
+                },
+                quantity: 1,
+            },
+        ],
+        mode: 'payment',
+        metadata: {
+            tuitionId,
+            tutorEmail,
+            studentEmail,
+            applicationId
+        },
+        // Using SITE_DOMAIN from environment variables
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/student/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/student/applications`,
+    });
+
+    res.send({ id: session.id, url: session.url });
+}));
 
 // Demo Payment API (POST /payments/demo)
 app.post('/payments/demo', verifyJWT, verifySTUDENT, async (req, res) => {
