@@ -5,7 +5,7 @@ const admin = require('firebase-admin');
 const stripe = require('stripe');
 require('dotenv').config();
 
-// 1. ENVIRONMENT VALIDATION
+
 const requiredEnvVars = ['MONGODB_URI', 'STRIPE_SECRET_KEY'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
@@ -17,7 +17,7 @@ if (missingEnvVars.length > 0) {
 const app = express();
 const port = process.env.PORT || 5000;
 
-// catchAsync utility to handle async errors globally
+
 const catchAsync = fn => {
     return (req, res, next) => {
         fn(req, res, next).catch(next);
@@ -25,7 +25,7 @@ const catchAsync = fn => {
 };
 
 
-// 2. GLOBAL PROCESS HANDLERS
+
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -35,23 +35,23 @@ process.on('uncaughtException', (error) => {
     process.exit(1);
 });
 
-// 3. COOP / COEP HEADERS (Required for Firebase OAuth Popup)
+
 app.use((req, res, next) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
     next();
 });
 
-// 4. CORS CONFIG (Allow All Origins)
+
 app.use(cors());
 app.options('*', cors());
 
 app.use(express.json());
 
-// 5. STRIPE INITIALIZATION
+
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 
-// 6. FIREBASE ADMIN INITIALIZATION
+
 let serviceAccount;
 
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
@@ -89,7 +89,7 @@ try {
     process.exit(1);
 }
 
-// 7. MONGODB CONNECTION
+
 const uri = process.env.MONGODB_URI;
 const client = new MongoClient(uri, {
     serverApi: {
@@ -102,11 +102,11 @@ const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 30000
 });
 
-// DB status
+
 let dbStatus = 'Initializing...';
 let dbError = null;
 
-// Collections
+
 let usersCollection,
     tuitionsPostCollection,
     applicationsCollection,
@@ -144,14 +144,14 @@ async function connectDB() {
         dbStatus = 'Failed';
         dbError = error;
         console.error('MongoDB Connection Error:', error);
-        throw error; // Propagate error to startServer
+        throw error;
     }
 }
 
 
 
 
-//    ✅ BASIC HEALTH CHECK ROUTE
+
 
 app.get('/', (req, res) => {
     res.json({
@@ -162,7 +162,7 @@ app.get('/', (req, res) => {
 });
 
 
-// MIDDLEWARE: Check Database Connection
+
 app.use((req, res, next) => {
     if (req.path === '/' || req.path === '/health') return next();
 
@@ -176,7 +176,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// MIDDLEWARE: JWT Verification
+
 const verifyFBToken = async (req, res, next) => {
     const authorization = req.headers.authorization;
     if (!authorization) {
@@ -191,9 +191,9 @@ const verifyFBToken = async (req, res, next) => {
     try {
         const decodedToken = await admin.auth().verifyIdToken(token);
         req.decoded = decodedToken;
-        // Standardized to decoded_email as per user requirement
+        
         req.decoded_email = decodedToken.email;
-        // Keep backward compatibility for existing code
+        
         req.tokenEmail = decodedToken.email;
         next();
     } catch (error) {
@@ -203,7 +203,7 @@ const verifyFBToken = async (req, res, next) => {
 };
 
 
-// MIDDLEWARE: Role Verification
+
 
 const verifySTUDENT = async (req, res, next) => {
     const email = req.tokenEmail;
@@ -238,13 +238,17 @@ const verifyADMIN = async (req, res, next) => {
 
 
 
-// USER MANAGEMENT APIs
 
 
-//  Create User (POST /user) - Used by Register & Login
+
+
+
+
+
+
 app.post('/user', catchAsync(async (req, res) => {
     const user = req.body;
-    // Ensure displayName is saved if provided
+
     if (user.displayName && !user.name) user.name = user.displayName;
 
     const query = { email: user.email };
@@ -256,7 +260,7 @@ app.post('/user', catchAsync(async (req, res) => {
     res.send(result);
 }));
 
-//  Get User Role (GET /users/:email) - Used by AuthContext
+
 app.get('/users/:email', catchAsync(async (req, res) => {
     const email = req.params.email;
     const query = { email: email };
@@ -264,13 +268,13 @@ app.get('/users/:email', catchAsync(async (req, res) => {
     res.send(user);
 }));
 
-//  Get All Users (GET /users) - Used by Admin ManageUsers
+
 app.get('/users', verifyFBToken, verifyADMIN, catchAsync(async (req, res) => {
     const result = await usersCollection.find().toArray();
     res.send(result);
 }));
 
-//  Delete User (DELETE /user/:id) - Used by Admin ManageUsers
+
 app.delete('/user/:id', verifyFBToken, verifyADMIN, catchAsync(async (req, res) => {
     const id = req.params.id;
     const query = { _id: new ObjectId(id) };
@@ -278,7 +282,7 @@ app.delete('/user/:id', verifyFBToken, verifyADMIN, catchAsync(async (req, res) 
     res.send(result);
 }));
 
-// Update User Role (PATCH /update-role/:id) - Used by Admin ManageUsers
+
 app.patch('/update-role/:id', verifyFBToken, verifyADMIN, async (req, res) => {
     const id = req.params.id;
     const { role } = req.body;
@@ -290,19 +294,19 @@ app.patch('/update-role/:id', verifyFBToken, verifyADMIN, async (req, res) => {
     res.send(result);
 });
 
-//  Get My Profile (GET /user/profile) - Used by ProfileSettings
+
 app.get('/user/profile', verifyFBToken, async (req, res) => {
     const email = req.tokenEmail;
     const query = { email: email };
     const user = await usersCollection.findOne(query);
     if (user) {
-        // Map name to displayName for frontend compatibility if needed
+
         user.displayName = user.name || user.displayName;
     }
     res.send(user);
 });
 
-//  Update My Profile (PUT /user/profile) - Used by ProfileSettings
+
 app.put('/user/profile', verifyFBToken, async (req, res) => {
     const email = req.tokenEmail;
     const item = req.body;
@@ -314,7 +318,7 @@ app.put('/user/profile', verifyFBToken, async (req, res) => {
     };
     if (item.displayName) updateFields.name = item.displayName;
 
-    // Remove undefined fields
+
     Object.keys(updateFields).forEach(key => updateFields[key] === undefined && delete updateFields[key]);
 
     const updateDoc = {
@@ -325,7 +329,7 @@ app.put('/user/profile', verifyFBToken, async (req, res) => {
     res.send(result);
 });
 
-//  Admin Analytics (GET /reports/analytics)
+
 app.get('/reports/analytics', verifyFBToken, verifyADMIN, async (req, res) => {
     const totalUsers = await usersCollection.countDocuments();
     const totalStudentCount = await usersCollection.countDocuments({ role: 'student' });
@@ -344,13 +348,13 @@ app.get('/reports/analytics', verifyFBToken, verifyADMIN, async (req, res) => {
     });
 });
 
-//  Get All Tuitions for Admin (GET /admin/tuitions)
+
 app.get('/admin/tuitions', verifyFBToken, verifyADMIN, async (req, res) => {
     const result = await tuitionsPostCollection.find().sort({ created_at: -1 }).toArray();
     res.send(result);
 });
 
-//  Update Tuition Status (PATCH /tuition-status/:id)
+
 app.patch('/tuition-status/:id', verifyFBToken, verifyADMIN, async (req, res) => {
     const id = req.params.id;
     const { status } = req.body;
@@ -362,7 +366,7 @@ app.patch('/tuition-status/:id', verifyFBToken, verifyADMIN, async (req, res) =>
     res.send(result);
 });
 
-//  Get All Payments for Admin (GET /all-payments)
+
 app.get('/all-payments', verifyFBToken, verifyADMIN, async (req, res) => {
     try {
         const payments = await paymentsCollection.find()
@@ -379,14 +383,7 @@ app.get('/all-payments', verifyFBToken, verifyADMIN, async (req, res) => {
 
 
 
-// ...
 
-
-
-// PUBLIC APIs
-
-
-// Get All Tutors (GET /tutors) - Public Access with Pagination
 app.get('/tutors', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -396,7 +393,7 @@ app.get('/tutors', async (req, res) => {
 
         const query = { role: 'tutor' };
 
-        // Search by name or email
+
         if (search) {
             query.$or = [
                 { name: { $regex: search, $options: 'i' } },
@@ -423,7 +420,7 @@ app.get('/tutors', async (req, res) => {
     }
 });
 
-// Get Single Tutor Details (GET /tutors/:id) - Public Access
+
 app.get('/tutors/:id', async (req, res) => {
     try {
         const id = req.params.id;
@@ -439,7 +436,7 @@ app.get('/tutors/:id', async (req, res) => {
     }
 });
 
-// Get Public Generic Tuitions (GET /tuitions) - Public Access
+
 app.get('/tuitions', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -450,7 +447,7 @@ app.get('/tuitions', async (req, res) => {
 
         const query = { status: 'approved' };
 
-        //  Search (Subject or Location)
+
         if (search) {
             query.$or = [
                 { subject: { $regex: search, $options: 'i' } },
@@ -458,13 +455,12 @@ app.get('/tuitions', async (req, res) => {
             ];
         }
 
-        //  Advanced Filters
+
         if (subject) query.subject = { $regex: subject, $options: 'i' };
         if (location) query.location = { $regex: location, $options: 'i' };
         if (stuClass) query.class = { $regex: stuClass, $options: 'i' };
 
-        //  Sorting
-        let sortOptions = { created_at: -1 }; // Default: Newest
+        let sortOptions = { created_at: -1 };
         if (sort === 'price_asc') {
             sortOptions = { salary: 1 };
 
@@ -493,7 +489,7 @@ app.get('/tuitions', async (req, res) => {
     }
 });
 
-// Get Single Tuition Details (GET /tuitions/:id) - Public Access
+
 app.get('/tuitions/:id', async (req, res) => {
     const id = req.params.id;
     try {
@@ -507,16 +503,19 @@ app.get('/tuitions/:id', async (req, res) => {
 });
 
 
-// REVIEWS APIs
 
 
-// Submit a Review (POST /reviews) - Student only
+
+
+
+
+
 app.post('/reviews', verifyFBToken, verifySTUDENT, async (req, res) => {
     try {
         const { tutorEmail, rating, comment, tuitionId } = req.body;
         const studentEmail = req.tokenEmail;
 
-        // Check if student has a payment record with this tutor
+
         const payment = await paymentsCollection.findOne({
             studentEmail,
             tutorEmail
@@ -526,13 +525,13 @@ app.post('/reviews', verifyFBToken, verifySTUDENT, async (req, res) => {
             return res.status(403).send({ message: 'Only students with completed payments can review this tutor' });
         }
 
-        // Check if already reviewed this tutor
+
         const existingReview = await reviewsCollection.findOne({ studentEmail, tutorEmail });
         if (existingReview) {
             return res.status(409).send({ message: 'Focus on your studies! You have already reviewed this tutor.' });
         }
 
-        // Get student details for the review
+
         const student = await usersCollection.findOne({ email: studentEmail });
 
         const review = {
@@ -548,7 +547,7 @@ app.post('/reviews', verifyFBToken, verifySTUDENT, async (req, res) => {
 
         const result = await reviewsCollection.insertOne(review);
 
-        // Create notification for tutor
+
         await notificationsCollection.insertOne({
             userEmail: tutorEmail,
             type: 'review',
@@ -565,7 +564,7 @@ app.post('/reviews', verifyFBToken, verifySTUDENT, async (req, res) => {
     }
 });
 
-// Get Reviews for a Tutor (GET /reviews/:tutorEmail)
+
 app.get('/reviews/:tutorEmail', async (req, res) => {
     try {
         const { tutorEmail } = req.params;
@@ -579,7 +578,7 @@ app.get('/reviews/:tutorEmail', async (req, res) => {
     }
 });
 
-// Get Average Rating for a Tutor (GET /tutor-rating/:tutorEmail)
+
 app.get('/tutor-rating/:tutorEmail', async (req, res) => {
     try {
         const { tutorEmail } = req.params;
@@ -600,23 +599,26 @@ app.get('/tutor-rating/:tutorEmail', async (req, res) => {
 });
 
 
-// BOOKMARKS APIs
 
 
-// Toggle Bookmark (POST /bookmarks)
+
+
+
+
+
 app.post('/bookmarks', verifyFBToken, async (req, res) => {
     try {
-        const { itemId, type } = req.body; // type = 'tutor' | 'tuition'
+        const { itemId, type } = req.body;
         const userEmail = req.tokenEmail;
 
         const existing = await bookmarksCollection.findOne({ userEmail, itemId, type });
 
         if (existing) {
-            // Remove bookmark
+
             await bookmarksCollection.deleteOne({ _id: existing._id });
             res.send({ bookmarked: false, message: 'Bookmark removed' });
         } else {
-            // Add bookmark
+
             await bookmarksCollection.insertOne({
                 userEmail,
                 itemId,
@@ -631,7 +633,7 @@ app.post('/bookmarks', verifyFBToken, async (req, res) => {
     }
 });
 
-// Get My Bookmarks (GET /my-bookmarks)
+
 app.get('/my-bookmarks', verifyFBToken, async (req, res) => {
     try {
         const userEmail = req.tokenEmail;
@@ -648,7 +650,7 @@ app.get('/my-bookmarks', verifyFBToken, async (req, res) => {
     }
 });
 
-// Check if Bookmarked (GET /is-bookmarked)
+
 app.get('/is-bookmarked', verifyFBToken, async (req, res) => {
     try {
         const { itemId, type } = req.query;
@@ -662,10 +664,15 @@ app.get('/is-bookmarked', verifyFBToken, async (req, res) => {
 });
 
 
-// NOTIFICATIONS APIs
 
 
-// Get My Notifications (GET /notifications)
+
+
+
+
+
+
+
 app.get('/notifications', verifyFBToken, async (req, res) => {
     try {
         const userEmail = req.tokenEmail;
@@ -681,7 +688,7 @@ app.get('/notifications', verifyFBToken, async (req, res) => {
     }
 });
 
-// Mark Notification as Read (PATCH /notifications/:id/read)
+
 app.patch('/notifications/:id/read', verifyFBToken, async (req, res) => {
     try {
         const { id } = req.params;
@@ -695,7 +702,7 @@ app.patch('/notifications/:id/read', verifyFBToken, async (req, res) => {
     }
 });
 
-// Mark All Notifications as Read (PATCH /notifications/read-all)
+
 app.patch('/notifications/read-all', verifyFBToken, async (req, res) => {
     try {
         const userEmail = req.tokenEmail;
@@ -709,7 +716,7 @@ app.patch('/notifications/read-all', verifyFBToken, async (req, res) => {
     }
 });
 
-// Delete Notification (DELETE /notifications/:id)
+
 app.delete('/notifications/:id', verifyFBToken, async (req, res) => {
     try {
         const { id } = req.params;
@@ -721,18 +728,20 @@ app.delete('/notifications/:id', verifyFBToken, async (req, res) => {
 });
 
 
-// MESSAGING APIs
 
 
-// Start or Get Conversation (POST /conversations)
-// Start or Get Conversation (POST /conversations)
+
+
+
+
+
 app.post('/conversations', verifyFBToken, async (req, res) => {
     try {
         const { recipientEmail } = req.body;
         const senderEmail = req.tokenEmail.toLowerCase();
         const recipientEmailLower = recipientEmail.toLowerCase();
 
-        // Check if conversation already exists (case-insensitive by storing/querying lowercase)
+
         const existing = await conversationsCollection.findOne({
             participants: { $all: [senderEmail, recipientEmailLower] }
         });
@@ -741,7 +750,7 @@ app.post('/conversations', verifyFBToken, async (req, res) => {
             return res.send(existing);
         }
 
-        // Create new conversation
+
         const conversation = {
             participants: [senderEmail, recipientEmailLower],
             lastMessage: null,
@@ -758,23 +767,23 @@ app.post('/conversations', verifyFBToken, async (req, res) => {
 });
 
 
-// Get My Conversations (GET /my-conversations)
+
 app.get('/my-conversations', verifyFBToken, async (req, res) => {
     try {
         const userEmail = req.tokenEmail.toLowerCase();
 
-        // Find conversations where user matches any participant (case-insensitive)
+
         const conversations = await conversationsCollection
             .find({ participants: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } })
             .sort({ lastMessageAt: -1 })
             .toArray();
 
-        // Populate other participant info
+
         for (let conv of conversations) {
-            // Find participant that is NOT the current user (case-insensitive)
+
             const otherEmail = conv.participants.find(p => p.toLowerCase() !== userEmail);
 
-            // Fetch user details case-insensitively
+
             const otherUser = await usersCollection.findOne({
                 email: { $regex: new RegExp(`^${otherEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
             });
@@ -794,8 +803,7 @@ app.get('/my-conversations', verifyFBToken, async (req, res) => {
     }
 });
 
-// Send Message (POST /messages)
-// Send Message (POST /messages)
+
 app.post('/messages', verifyFBToken, async (req, res) => {
     try {
         const { conversationId, content } = req.body;
@@ -811,19 +819,19 @@ app.post('/messages', verifyFBToken, async (req, res) => {
 
         const result = await messagesCollection.insertOne(message);
 
-        // Update conversation's lastMessage
+
         await conversationsCollection.updateOne(
             { _id: new ObjectId(conversationId) },
             { $set: { lastMessage: content, lastMessageAt: new Date() } }
         );
 
-        // Create notification for recipient
+   
         const conv = await conversationsCollection.findOne({ _id: new ObjectId(conversationId) });
 
-        // Find recipient: The participant that is NOT the sender (case-insensitive)
+
         const recipientEmail = conv.participants.find(p => p.toLowerCase() !== senderEmail);
 
-        // Get Sender Name for notification
+  
         const sender = await usersCollection.findOne({
             email: { $regex: new RegExp(`^${senderEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
         });
@@ -834,7 +842,7 @@ app.post('/messages', verifyFBToken, async (req, res) => {
                 userEmail: recipientEmail,
                 type: 'message',
                 message: `New message from ${senderName}`,
-                link: `/dashboard/messages?id=${conversationId}`, // Deep link to conversation
+                link: `/dashboard/messages?id=${conversationId}`,
                 read: false,
                 createdAt: new Date()
             });
@@ -847,7 +855,7 @@ app.post('/messages', verifyFBToken, async (req, res) => {
     }
 });
 
-// Get Messages for a Conversation (GET /messages/:conversationId)
+
 app.get('/messages/:conversationId', verifyFBToken, async (req, res) => {
     try {
         const { conversationId } = req.params;
@@ -863,16 +871,20 @@ app.get('/messages/:conversationId', verifyFBToken, async (req, res) => {
 });
 
 
-// SCHEDULE/CALENDAR APIs
 
 
-// Create Schedule (POST /schedules) - Tutor or Student creates for ongoing tuition
+
+
+
+
+
+
 app.post('/schedules', verifyFBToken, async (req, res) => {
     try {
         const { tuitionId, partnerEmail, date, startTime, endTime, subject, notes, meetingLink } = req.body;
         const userEmail = req.tokenEmail;
 
-        // Verify the tuition and participants
+
         const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
         if (!tuition) return res.status(404).send({ message: 'Tuition not found' });
 
@@ -882,18 +894,18 @@ app.post('/schedules', verifyFBToken, async (req, res) => {
             tuition.assignedTutorId?.toLowerCase() === userEmail.toLowerCase();
 
         if (studentIdMatch) {
-            // Initiator is student
+
             studentEmail = userEmail;
             tutorEmail = partnerEmail || tuition.assignedTutorEmail;
         } else if (tutorEmailMatch) {
-            // Initiator is tutor
+
             tutorEmail = userEmail;
             studentEmail = partnerEmail || tuition.studentId;
         } else {
             return res.status(403).send({ message: 'You are not part of this tuition' });
         }
 
-        // Get student and tutor names for better display (case-insensitive)
+
         const student = await usersCollection.findOne({ email: { $regex: new RegExp(`^${studentEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
         const tutor = await usersCollection.findOne({ email: { $regex: new RegExp(`^${tutorEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
 
@@ -917,7 +929,7 @@ app.post('/schedules', verifyFBToken, async (req, res) => {
 
         const result = await schedulesCollection.insertOne(schedule);
 
-        // Notify the OTHER party
+
         const isStudentCreator = userEmail.toLowerCase() === studentEmail.toLowerCase();
         const recipientEmail = isStudentCreator ? tutorEmail : studentEmail;
         const senderName = isStudentCreator ? (student?.displayName || student?.name) : (tutor?.displayName || tutor?.name);
@@ -938,7 +950,7 @@ app.post('/schedules', verifyFBToken, async (req, res) => {
     }
 });
 
-// Get My Students/Tuitions (GET /tutor/my-students) - Used for scheduling
+
 app.get('/tutor/my-students', verifyFBToken, verifyTUTOR, async (req, res) => {
     try {
         const email = req.tokenEmail;
@@ -949,7 +961,7 @@ app.get('/tutor/my-students', verifyFBToken, verifyTUTOR, async (req, res) => {
             ]
         }).toArray();
 
-        // Enrich with student names
+
         for (let t of tuitions) {
             const student = await usersCollection.findOne({ email: t.studentId });
             t.studentName = student?.displayName || student?.name || 'Student';
@@ -962,7 +974,7 @@ app.get('/tutor/my-students', verifyFBToken, verifyTUTOR, async (req, res) => {
     }
 });
 
-// Get My Tutors (GET /student/my-tutors) - Used for scheduling
+
 app.get('/student/my-tutors', verifyFBToken, verifySTUDENT, async (req, res) => {
     try {
         const email = req.tokenEmail;
@@ -971,7 +983,7 @@ app.get('/student/my-tutors', verifyFBToken, verifySTUDENT, async (req, res) => 
             assignedTutorEmail: { $exists: true }
         }).toArray();
 
-        // Enrich with tutor names
+
         for (let t of tuitions) {
             const tutor = await usersCollection.findOne({ email: t.assignedTutorEmail });
             t.tutorName = tutor?.displayName || tutor?.name || 'Tutor';
@@ -983,7 +995,7 @@ app.get('/student/my-tutors', verifyFBToken, verifySTUDENT, async (req, res) => 
         res.status(500).send({ message: 'Failed to fetch tutors' });
     }
 });
-// Get My Schedule (GET /my-schedule) - Strict One-to-One Visibility
+
 app.get('/my-schedule', verifyFBToken, async (req, res) => {
     try {
         const userEmail = req.tokenEmail.toLowerCase();
@@ -997,13 +1009,13 @@ app.get('/my-schedule', verifyFBToken, async (req, res) => {
         let query = {};
 
         if (role === 'student') {
-            // Rule: Student sees schedules matching their email
+
             query = { studentEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } };
         } else if (role === 'tutor' || role === 'teacher') {
-            // Rule: Tutor/Teacher sees schedules matching their email
+
             query = { tutorEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } };
         } else if (role === 'admin') {
-            // Admin sees their own involvements
+
             query = {
                 $or: [
                     { studentEmail: { $regex: new RegExp(`^${userEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
@@ -1025,7 +1037,7 @@ app.get('/my-schedule', verifyFBToken, async (req, res) => {
     }
 });
 
-// Update Schedule (PATCH /schedules/:id)
+
 app.patch('/schedules/:id', verifyFBToken, async (req, res) => {
     try {
         const { id } = req.params;
@@ -1050,7 +1062,7 @@ app.patch('/schedules/:id', verifyFBToken, async (req, res) => {
     }
 });
 
-// Delete Schedule (DELETE /schedules/:id) - Creator-Only Permission
+
 app.delete('/schedules/:id', verifyFBToken, async (req, res) => {
     try {
         const { id } = req.params;
@@ -1059,7 +1071,7 @@ app.delete('/schedules/:id', verifyFBToken, async (req, res) => {
         const schedule = await schedulesCollection.findOne({ _id: new ObjectId(id) });
         if (!schedule) return res.status(404).send({ message: 'Schedule not found' });
 
-        // Rule: Only allow delete if currentUserId === createdBy
+
         if (schedule.createdBy.toLowerCase() !== userEmail) {
             return res.status(403).send({
                 success: false,
@@ -1076,15 +1088,19 @@ app.delete('/schedules/:id', verifyFBToken, async (req, res) => {
 });
 
 
-// TUTOR APIs
 
 
-// Apply for Tuition (POST /apply-tuition)
+
+
+
+
+
+
 app.post('/apply-tuition', verifyFBToken, verifyTUTOR, async (req, res) => {
     const { tuitionId, experience, qualification, expectedSalary } = req.body;
     const tutorEmail = req.tokenEmail;
 
-    // 1. Check if already applied
+
     const existingApp = await applicationsCollection.findOne({
         tutorEmail: tutorEmail,
         tuitionId: tuitionId
@@ -1093,13 +1109,13 @@ app.post('/apply-tuition', verifyFBToken, verifyTUTOR, async (req, res) => {
         return res.status(409).send({ message: 'Already applied' });
     }
 
-    // 2. Get Tuition Details
+
     const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
     if (!tuition) {
         return res.status(404).send({ message: 'Tuition not found' });
     }
 
-    // Strict Validation Rules
+
     if (tuition.status !== 'approved') {
         return res.status(403).send({ message: 'Tuition is not open for applications' });
     }
@@ -1107,7 +1123,7 @@ app.post('/apply-tuition', verifyFBToken, verifyTUTOR, async (req, res) => {
         return res.status(409).send({ message: 'Tuition already assigned to a tutor' });
     }
 
-    //  Create Application
+
     const newApplication = {
         tuitionId: tuitionId,
         tutorEmail: tutorEmail,
@@ -1123,14 +1139,14 @@ app.post('/apply-tuition', verifyFBToken, verifyTUTOR, async (req, res) => {
     res.send(result);
 });
 
-// Get Active Tuition Posts (Strict Requirement: GET /tuitions-post)
+
 
 app.get('/tuitions-post', verifyFBToken, verifyTUTOR, async (req, res) => {
 
     const status = req.query.status || 'approved';
     const query = {
         status: status,
-        assignedTutorEmail: { $exists: false } // Only show tuitions that haven't been assigned yet
+        assignedTutorEmail: { $exists: false }
     };
 
 
@@ -1138,7 +1154,7 @@ app.get('/tuitions-post', verifyFBToken, verifyTUTOR, async (req, res) => {
 
     if (subject) query.subject = { $regex: subject, $options: 'i' };
     if (location) query.location = { $regex: location, $options: 'i' };
-    if (classParam) query.class = { $regex: classParam, $options: 'i' }; // Partial match for class is better
+    if (classParam) query.class = { $regex: classParam, $options: 'i' };
 
     const result = await tuitionsPostCollection.find(query)
         .sort({ created_at: -1 })
@@ -1158,15 +1174,19 @@ app.get('/my-applications', verifyFBToken, verifyTUTOR, async (req, res) => {
 });
 
 
-// TEACHER ROLE REQUEST APIs
 
 
-// 1. Create Role Request (POST /role-requests) - Student Only
+
+
+
+
+
+
 app.post('/role-requests', verifyFBToken, verifySTUDENT, async (req, res) => {
     const request = req.body;
     const email = req.tokenEmail;
 
-    // Check if pending request exists
+
     const existing = await roleRequestsCollection.findOne({
         userId: email,
         status: 'pending'
@@ -1177,7 +1197,7 @@ app.post('/role-requests', verifyFBToken, verifySTUDENT, async (req, res) => {
     }
 
     const newRequest = {
-        userId: email, // Using email as ID
+        userId: email,
         userName: request.userName,
         userEmail: email,
         currentRole: 'student',
@@ -1192,14 +1212,14 @@ app.post('/role-requests', verifyFBToken, verifySTUDENT, async (req, res) => {
     res.send(result);
 });
 
-//  Get My Requests (GET /role-requests/my) - Student/Tutor
+
 app.get('/role-requests/my', verifyFBToken, async (req, res) => {
     const email = req.tokenEmail;
     const result = await roleRequestsCollection.find({ userId: email }).sort({ created_at: -1 }).toArray();
     res.send(result);
 });
 
-//  Get All Pending Requests (GET /role-requests) - Admin Only
+
 app.get('/role-requests', verifyFBToken, verifyADMIN, async (req, res) => {
     const status = req.query.status;
     let query = {};
@@ -1212,27 +1232,29 @@ app.get('/role-requests', verifyFBToken, verifyADMIN, async (req, res) => {
 
 app.patch('/role-requests/:id', verifyFBToken, verifyADMIN, async (req, res) => {
     const id = req.params.id;
-    const { status, adminId } = req.body; // status: 'approved' | 'rejected'
+    const { status, adminId } = req.body;
 
     const request = await roleRequestsCollection.findOne({ _id: new ObjectId(id) });
     if (!request) return res.status(404).send({ message: 'Request not found' });
 
     if (status === 'approved') {
-        // Update User Role in Users Collection
+
         const userUpdate = await usersCollection.updateOne(
             { email: request.userEmail },
             { $set: { role: 'tutor' } }
         );
 
+  
+  
+  
+  
         if (userUpdate.modifiedCount === 0) {
-
-
 
             console.warn(`User ${request.userEmail} not found while approving role.`);
         }
     }
 
-    // Update Request Status
+    
     const filter = { _id: new ObjectId(id) };
     const updateDoc = {
         $set: {
@@ -1249,40 +1271,34 @@ app.patch('/role-requests/:id', verifyFBToken, verifyADMIN, async (req, res) => 
 
 
 
-// STUDENT APPLICATION MANAGEMENT & PAYMENT
 
-
-
-
-
-
-// Student Dashboard Stats (GET /student/dashboard-stats)
 app.get('/student/dashboard-stats', verifyFBToken, verifySTUDENT, async (req, res) => {
     const email = req.tokenEmail;
 
     try {
 
-        // Get all tuition IDs by this student
+
+
         const myTuitions = await tuitionsPostCollection.find({ studentId: email }).toArray();
         const myTuitionIds = myTuitions.map(t => t._id.toString());
 
-        //  Count applications for these tuitions
+
 
         const totalApplicationsReceived = await applicationsCollection.countDocuments({
             tuitionId: { $in: myTuitionIds }
         });
 
 
-        //  Total Tuitions Posted
+
         const totalTuitions = await tuitionsPostCollection.countDocuments({ studentId: email });
 
-        //  Total Hired Tutors (Assigned)
+
         const hiredTutorsCount = await tuitionsPostCollection.countDocuments({
             studentId: email,
             assignedTutorEmail: { $exists: true }
         });
 
-        //  Total Spending
+
         const payments = await paymentsCollection.find({ studentEmail: email }).toArray();
         const totalSpent = payments.reduce((sum, p) => sum + p.amount, 0);
 
@@ -1310,15 +1326,15 @@ app.get('/student-applications/:studentId', verifyFBToken, verifySTUDENT, async 
     const query = { studentEmail: studentId };
     const result = await applicationsCollection.find(query).sort({ created_at: -1 }).toArray();
 
-    // Enrich with Tutor Details and Tuition Title
+
     for (let app of result) {
-        // Attach Tutor Info
+
         const tutor = await usersCollection.findOne({ email: app.tutorEmail });
         if (tutor) {
             app.tutorName = tutor.name;
             app.tutorPhoto = tutor.photoURL || tutor.image;
         }
-        // Attach Tuition Info (Subject, Class)
+
         if (app.tuitionId) {
             const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(app.tuitionId) });
             if (tuition) {
@@ -1333,12 +1349,12 @@ app.get('/student-applications/:studentId', verifyFBToken, verifySTUDENT, async 
 });
 
 
-// Aliasing logic to support prompt requirement
+
 app.post('/tuition-application', verifyFBToken, verifyTUTOR, async (req, res) => {
     const { tuitionId, message, expectedSalary, availability, experience } = req.body;
     const tutorEmail = req.tokenEmail;
 
-    // 1. Check if already applied
+
     const existingApp = await applicationsCollection.findOne({
         tutorEmail: tutorEmail,
         tuitionId: tuitionId
@@ -1347,12 +1363,12 @@ app.post('/tuition-application', verifyFBToken, verifyTUTOR, async (req, res) =>
         return res.status(409).send({ message: 'Already applied' });
     }
 
-    // Get Tuition Details
+    
     const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
     if (!tuition) return res.status(404).send({ message: 'Tuition not found' });
     if (tuition.status !== 'approved') return res.status(403).send({ message: 'Tuition is not open' });
 
-    // 3. Create Application
+
     const newApplication = {
         tuitionId,
         tutorEmail,
@@ -1371,24 +1387,24 @@ app.post('/tuition-application', verifyFBToken, verifyTUTOR, async (req, res) =>
 
 
 
-// GET Applications for Tuition (Strict: GET /applications/:tuitionId)
+
 app.get('/applications/:tuitionId', verifyFBToken, verifySTUDENT, async (req, res) => {
     const tuitionId = req.params.tuitionId;
     const query = { tuitionId: tuitionId };
     const result = await applicationsCollection.find(query).toArray();
 
-    // Enrich with Tutor Details for Frontend UI
+
     for (let app of result) {
         const tutor = await usersCollection.findOne({ email: app.tutorEmail });
         if (tutor) {
-            app.tutorName = tutor.name; // Crucial for displaying name
+            app.tutorName = tutor.name;
             app.tutorPhoto = tutor.photoURL || tutor.image;
         }
     }
     res.send(result);
 });
 
-// DELETE Application (Strict: DELETE /applications/:id)
+
 app.delete('/applications/:id', verifyFBToken, verifySTUDENT, async (req, res) => {
     const id = req.params.id;
     const result = await applicationsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -1396,13 +1412,14 @@ app.delete('/applications/:id', verifyFBToken, verifySTUDENT, async (req, res) =
 });
 
 
-// Get Applications for a Tuition (GET /applied-tutors/:tuitionId)
+
+
 app.get('/applied-tutors/:tuitionId', verifyFBToken, verifySTUDENT, async (req, res) => {
     const tuitionId = req.params.tuitionId;
     const query = { tuitionId: tuitionId };
     const result = await applicationsCollection.find(query).toArray();
 
-    // Attach Tutor Name
+
     for (let app of result) {
         const tutor = await usersCollection.findOne({ email: app.tutorEmail });
         if (tutor) app.tutorName = tutor.name;
@@ -1410,7 +1427,7 @@ app.get('/applied-tutors/:tuitionId', verifyFBToken, verifySTUDENT, async (req, 
     res.send(result);
 });
 
-// Reject Application (POST /reject-tutor)
+
 app.post('/reject-tutor', verifyFBToken, verifySTUDENT, async (req, res) => {
     const { applicationId } = req.body;
     const filter = { _id: new ObjectId(applicationId) };
@@ -1419,13 +1436,14 @@ app.post('/reject-tutor', verifyFBToken, verifySTUDENT, async (req, res) => {
     res.send(result);
 });
 
-// Process Demo Payment (POST /process-payment)
+
+
 
 app.get('/student/recent-activities', verifyFBToken, verifySTUDENT, async (req, res) => {
     console.log("DEBUG: Hit /student/recent-activities");
     const email = req.tokenEmail;
 
-    // Recent Tuitions Posted
+
     const recentTuitions = await tuitionsPostCollection.find({ studentId: email })
         .sort({ created_at: -1 })
         .limit(3)
@@ -1438,7 +1456,7 @@ app.post('/process-payment', verifyFBToken, verifySTUDENT, async (req, res) => {
     const { applicationId, tuitionId, tutorEmail, amount, method, transactionId } = req.body;
     const studentEmail = req.tokenEmail;
 
-    // 1. Record Payment
+
     const payment = {
         transactionId,
         studentEmail,
@@ -1453,13 +1471,13 @@ app.post('/process-payment', verifyFBToken, verifySTUDENT, async (req, res) => {
     };
     const paymentResult = await paymentsCollection.insertOne(payment);
 
-    // 2. Update Application Status to 'accepted'
+
     await applicationsCollection.updateOne(
         { _id: new ObjectId(applicationId) },
         { $set: { status: 'accepted' } }
     );
 
-    // 3. Assign Tutor
+
     await tuitionsPostCollection.updateOne(
         { _id: new ObjectId(tuitionId) },
         { $set: { assignedTutorEmail: tutorEmail } }
@@ -1467,7 +1485,7 @@ app.post('/process-payment', verifyFBToken, verifySTUDENT, async (req, res) => {
 
     res.send({ success: true, paymentId: paymentResult.insertedId });
 });
-// CREATE STRIPE CHECKOUT SESSION
+
 app.post('/create-checkout-session', verifyFBToken, verifySTUDENT, catchAsync(async (req, res) => {
     const { amount, tuitionId, tutorEmail, applicationId, subject } = req.body;
     const studentEmail = req.decoded_email;
@@ -1482,7 +1500,7 @@ app.post('/create-checkout-session', verifyFBToken, verifySTUDENT, catchAsync(as
                         name: subject || 'Tuition Fee Payment',
                         description: `Payment for tuition: ${tuitionId}`,
                     },
-                    unit_amount: Math.round(amount * 100), // Amount in cents/paisa
+                    unit_amount: Math.round(amount * 100),
                 },
                 quantity: 1,
             },
@@ -1494,7 +1512,7 @@ app.post('/create-checkout-session', verifyFBToken, verifySTUDENT, catchAsync(as
             studentEmail,
             applicationId
         },
-        // Dynamically get the frontend URL from the request origin
+
         success_url: `${req.get('origin')}/dashboard/student/payment/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${req.get('origin')}/dashboard/student/applications`,
     });
@@ -1502,15 +1520,15 @@ app.post('/create-checkout-session', verifyFBToken, verifySTUDENT, catchAsync(as
     res.send({ id: session.id, url: session.url });
 }));
 
-// Demo Payment API (POST /payments/demo)
+
 app.post('/payments/demo', verifyFBToken, verifySTUDENT, async (req, res) => {
     const { applicationId, tuitionId, tutorEmail, amount } = req.body;
     const studentEmail = req.tokenEmail;
 
-    // 1. Simulate Payment Success
+
     const transactionId = 'DEMO_' + new Date().getTime();
 
-    // 2. Record Payment
+
     const payment = {
         transactionId,
         studentEmail,
@@ -1519,25 +1537,25 @@ app.post('/payments/demo', verifyFBToken, verifySTUDENT, async (req, res) => {
         applicationId,
         amount: parseFloat(amount),
         currency: 'BDT',
-        status: 'paid', // Success
+        status: 'paid',
         method: 'Demo PaymentSystem',
         date: new Date()
     };
     const paymentResult = await paymentsCollection.insertOne(payment);
 
-    // 3. Update Application Status to 'approved'
+    
     await applicationsCollection.updateOne(
         { _id: new ObjectId(applicationId) },
         { $set: { status: 'approved', paymentId: transactionId } }
     );
 
-    // 4. Close Tuition and Assign Tutor
+
     await tuitionsPostCollection.updateOne(
         { _id: new ObjectId(tuitionId) },
         { $set: { assignedTutorEmail: tutorEmail, assignedTutorId: tutorEmail } }
     );
 
-    // 5. Reject other applications for this tuition
+
     await applicationsCollection.updateMany(
         { tuitionId: tuitionId, _id: { $ne: new ObjectId(applicationId) } },
         { $set: { status: 'rejected' } }
@@ -1546,10 +1564,10 @@ app.post('/payments/demo', verifyFBToken, verifySTUDENT, async (req, res) => {
     res.send({ success: true, paymentId: transactionId, status: "Success" });
 });
 
-// Patch Application Status (PATCH /applications/:id)
+
 app.patch('/applications/:id', verifyFBToken, verifySTUDENT, async (req, res) => {
     const id = req.params.id;
-    const { status } = req.body; // Expecting 'rejected'
+    const { status } = req.body;
 
     const filter = { _id: new ObjectId(id) };
     const updateDoc = {
@@ -1559,7 +1577,7 @@ app.patch('/applications/:id', verifyFBToken, verifySTUDENT, async (req, res) =>
     res.send(result);
 });
 
-// Get My Payments (Student & Tutor) - Enriched
+
 app.get('/my-payments', verifyFBToken, async (req, res) => {
     const email = req.tokenEmail;
     const query = {
@@ -1570,15 +1588,15 @@ app.get('/my-payments', verifyFBToken, async (req, res) => {
     };
     const payments = await paymentsCollection.find(query).sort({ date: -1 }).toArray();
 
-    // Enrich with details
+
     for (let payment of payments) {
-        // Get Tuition Title
+
         if (payment.tuitionId) {
             const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(payment.tuitionId) });
             if (tuition) payment.tuitionTitle = tuition.subject;
         }
 
-        // Get Other Party Name
+
         const otherEmail = payment.studentEmail === email ? payment.tutorEmail : payment.studentEmail;
         const user = await usersCollection.findOne({ email: otherEmail });
         if (user) payment.otherName = user.name;
@@ -1590,24 +1608,21 @@ app.get('/my-payments', verifyFBToken, async (req, res) => {
 app.get('/tutor/dashboard-stats', verifyFBToken, verifyTUTOR, async (req, res) => {
     const email = req.tokenEmail;
 
-    // Earnings
+
     const payments = await paymentsCollection.find({ tutorEmail: email, status: 'paid' }).toArray();
     const totalEarnings = payments.reduce((sum, p) => sum + p.amount, 0);
 
-    // Active Tuitions (Approved Applications/Positions)
-    // Assuming 'approved' application means they got the job. 
-    // Better yet, check if they are the assigned tutor in a tuition? 
-    // For now, based on application acceptance + payment success flow:
+
     const activeTuitionsCount = await applicationsCollection.countDocuments({ tutorEmail: email, status: 'approved' });
 
-    // Total Applications
+
     const totalApplications = await applicationsCollection.countDocuments({ tutorEmail: email });
 
     res.send({
         totalEarnings,
         activeTuitionsCount,
         totalApplications,
-        // Profile views is mocked for now as we don't track it
+
         profileViews: 0
     });
 });
@@ -1615,7 +1630,7 @@ app.get('/tutor/dashboard-stats', verifyFBToken, verifyTUTOR, async (req, res) =
 app.get('/tutor/recent-activities', verifyFBToken, verifyTUTOR, async (req, res) => {
     const email = req.tokenEmail;
 
-    // Combine recent applications and recent payments
+
     const recentApps = await applicationsCollection.find({ tutorEmail: email })
         .sort({ created_at: -1 })
         .limit(3)
@@ -1638,7 +1653,7 @@ app.put('/tutor/profile', verifyFBToken, verifyTUTOR, async (req, res) => {
         $set: {
             qualification,
             experience,
-            subjects, // Array of strings
+            subjects,
             bio,
             hourlyRate: parseInt(hourlyRate),
             location,
@@ -1649,26 +1664,39 @@ app.put('/tutor/profile', verifyFBToken, verifyTUTOR, async (req, res) => {
     res.send(result);
 });
 
-
-
-// ADMIN APIs
-
-
-// Create Tuition Post (Strict Requirement: POST /tuitions-post)
-app.post('/tuitions-post', verifyFBToken, verifySTUDENT, async (req, res) => {
+app.post('/tuitions-post', verifyFBToken, verifySTUDENT, catchAsync(async (req, res) => {
     const tuition = req.body;
     const newTuition = {
         ...tuition,
-        studentId: req.tokenEmail, // Using email as ID reference based on auth flow, or we could fetch _id. User req says "studentId".
-        status: 'pending', // Step 1: Default status is Pending
+        studentId: req.tokenEmail,
+        status: 'pending',
         created_at: new Date(),
         updated_at: new Date()
     };
     const result = await tuitionsPostCollection.insertOne(newTuition);
-    res.send(result);
-});
 
-// Get My Tuitions (Updated to use tuitions-post)
+    try {
+        const tutors = await usersCollection.find({ role: 'tutor' }).toArray();
+        if (tutors.length > 0) {
+            const notifications = tutors.map(tutor => ({
+                userEmail: tutor.email,
+                type: 'application',
+                message: `New tuition posted: ${tuition.subject} in ${tuition.location}. Apply now!`,
+                link: `/tuition/${result.insertedId}`,
+                read: false,
+                createdAt: new Date()
+            }));
+            await notificationsCollection.insertMany(notifications);
+        }
+    } catch (notifyErr) {
+        console.error('Failed to notify tutors about new tuition:', notifyErr);
+
+    }
+
+    res.send(result);
+}));
+
+
 app.get('/my-tuitions', verifyFBToken, verifySTUDENT, async (req, res) => {
     const email = req.tokenEmail;
     const query = { studentId: email };
@@ -1676,12 +1704,12 @@ app.get('/my-tuitions', verifyFBToken, verifySTUDENT, async (req, res) => {
     res.send(result);
 });
 
-// Update My Tuition Post (PUT /tuition/:id)
+
 app.put('/tuition/:id', verifyFBToken, verifySTUDENT, async (req, res) => {
     const id = req.params.id;
     const email = req.tokenEmail;
     const updatedData = req.body;
-    delete updatedData._id; // Prevent updating ID
+    delete updatedData._id;
 
     const filter = { _id: new ObjectId(id), studentId: email };
     const updateDoc = {
@@ -1700,13 +1728,14 @@ app.put('/tuition/:id', verifyFBToken, verifySTUDENT, async (req, res) => {
 
 
 
-// Verify Payment Success (POST /payment-success)
+
+
 app.post('/payment-success', verifyFBToken, verifySTUDENT, async (req, res) => {
     const { sessionId } = req.body;
 
     try {
         if (sessionId.startsWith('DEMO_')) {
-            // DEMO FLOW
+
             const payment = await paymentsCollection.findOne({ transactionId: sessionId });
             if (payment) {
                 return res.send({ success: true, message: 'Payment verified (Demo)', payment });
@@ -1714,20 +1743,20 @@ app.post('/payment-success', verifyFBToken, verifySTUDENT, async (req, res) => {
                 return res.send({ success: false, message: 'Payment not found in demo records' });
             }
         } else {
-            // STRIPE FLOW
+
             const session = await stripeClient.checkout.sessions.retrieve(sessionId);
 
             if (session.payment_status === 'paid') {
                 const { tuitionId, tutorEmail, studentEmail, applicationId } = session.metadata;
                 const transactionId = session.payment_intent;
 
-                // Check for duplicate
+
                 const existingPayment = await paymentsCollection.findOne({ transactionId });
                 if (existingPayment) {
                     return res.send({ message: 'Payment already recorded' });
                 }
 
-                // Record Payment
+
                 const paymentRecord = {
                     tuitionId,
                     tutorEmail,
@@ -1735,13 +1764,13 @@ app.post('/payment-success', verifyFBToken, verifySTUDENT, async (req, res) => {
                     transactionId,
                     amount: session.amount_total / 100,
                     currency: session.currency.toUpperCase(),
-                    status: 'paid', // Transaction status
+                    status: 'paid',
                     method: 'Stripe',
                     created_at: new Date()
                 };
                 await paymentsCollection.insertOne(paymentRecord);
 
-                // Database Updates
+
                 await applicationsCollection.updateOne(
                     { _id: new ObjectId(applicationId) },
                     { $set: { status: 'approved', paymentId: transactionId } }
@@ -1771,9 +1800,12 @@ app.post('/payment-success', verifyFBToken, verifySTUDENT, async (req, res) => {
     }
 });
 
-// End of Routes
 
-// 8. GLOBAL ERROR HANDLING MIDDLEWARE
+
+
+
+
+
 app.use((err, req, res, next) => {
     console.error('SERVER ERROR:', err.stack);
     res.status(err.status || 500).send({
@@ -1798,5 +1830,5 @@ async function startServer() {
 
 startServer();
 
-// Export app for Vercel/Render (compatibility)
+
 module.exports = app;
