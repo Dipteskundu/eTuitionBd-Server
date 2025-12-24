@@ -5,83 +5,94 @@ const admin = require('firebase-admin');
 const stripe = require('stripe');
 require('dotenv').config();
 
-const app = express();
-const port = process.env.PORT || 5000;
+// 1. ENVIRONMENT VALIDATION
+const requiredEnvVars = ['MONGODB_URI', 'FIREBASE_SERVICE_ACCOUNT', 'STRIPE_SECRET_KEY', 'CLIENT_DOMAIN'];
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 
-
-//    COOP / COEP FIX (MUST be before routes)
-
-app.use((req, res, next) => {
-    res.setHeader(
-        'Cross-Origin-Opener-Policy',
-        'same-origin-allow-popups'
-    );
-    res.setHeader(
-        'Cross-Origin-Embedder-Policy',
-        'unsafe-none'
-    );
-    next();
-});
-
-
-//    CORS CONFIG
-
-app.use(cors({
-    origin: [
-        process.env.CLIENT_DOMAIN,
-        'https://etuitionbd-the-best-tuition-media.netlify.app',
-        'https://symphonious-sherbet-5b5c9e.netlify.app',
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:5174'
-    ].filter(Boolean),
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']
-}));
-
-app.use(express.json());
-
-
-//     STRIPE
-
-if (!process.env.STRIPE_SECRET_KEY) {
-    console.error('STRIPE_SECRET_KEY is missing');
+if (missingEnvVars.length > 0) {
+    console.error(`CRITICAL ERROR: Missing environment variables: ${missingEnvVars.join(', ')}`);
+    // On Render, we should let the app start but fail health check if vars are missing
+    // or exit if they are absolutely required for startup.
     process.exit(1);
 }
 
+const app = express();
+const port = process.env.PORT || 5000;
+
+// catchAsync utility to handle async errors globally
+const catchAsync = fn => {
+    return (req, res, next) => {
+        fn(req, res, next).catch(next);
+    };
+};
+
+
+// 2. GLOBAL PROCESS HANDLERS
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+    process.exit(1);
+});
+
+// 3. COOP / COEP HEADERS (Required for Firebase OAuth Popup)
+app.use((req, res, next) => {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+    next();
+});
+
+// 4. CORS CONFIG
+const allowedOrigins = [
+    process.env.CLIENT_DOMAIN,
+    'https://etuitionbd-the-best-tuition-media.netlify.app',
+    'https://symphonious-sherbet-5b5c9e.netlify.app',
+    'http://localhost:5173',
+    'http://localhost:5174'
+].filter(Boolean);
+
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+
+        const isAllowed = allowedOrigins.includes(origin) ||
+            origin.endsWith('.netlify.app') ||
+            origin.endsWith('.vercel.app'); // Added Vercel just in case
+
+        if (isAllowed) {
+            callback(null, true);
+        } else {
+            console.warn(`CORS blocked for origin: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+
+// Handle OPTIONS preflight explicitly if needed (though cors middleware does this)
+app.options('*', cors());
+
+app.use(express.json());
+
+// 5. STRIPE INITIALIZATION
 const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
 
-
-//    FIREBASE ADMIN (Render / Local Safe)
-
+// 6. FIREBASE ADMIN INITIALIZATION
 try {
-    let serviceAccount = null;
+    let serviceAccount;
+    const saEnv = process.env.FIREBASE_SERVICE_ACCOUNT;
 
-    // Local development
-    if (process.env.NODE_ENV !== 'production') {
-        try {
-            serviceAccount = require('./assingment-11-service-key.json');
-            console.log('Firebase key loaded from local file');
-        } catch {
-            console.warn('Local Firebase key file not found');
-        }
-    }
-
-    // Production (ENV variable)
-    if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT) {
-        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        console.log('Firebase key loaded from FIREBASE_SERVICE_ACCOUNT');
-    }
-
-    if (!serviceAccount && process.env.FB_SERVICE_KEY) {
-        const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('ascii');
+    if (saEnv.startsWith('{')) {
+        serviceAccount = JSON.parse(saEnv);
+    } else {
+        // Assume Base64 encoded
+        const decoded = Buffer.from(saEnv, 'base64').toString('utf8');
         serviceAccount = JSON.parse(decoded);
-        console.log('Firebase key loaded from FB_SERVICE_KEY');
-    }
-
-    if (!serviceAccount) {
-        throw new Error('Firebase service account not found');
     }
 
     if (!admin.apps.length) {
@@ -89,18 +100,16 @@ try {
             credential: admin.credential.cert(serviceAccount)
         });
     }
-
     console.log('Firebase Admin initialized successfully');
 } catch (error) {
     console.error('Firebase Admin initialization failed:', error.message);
+    // Don't exit here, let health check catch it if we want the app to stay up for debugging,
+    // but usually Render prefers a crash so it can restart.
     process.exit(1);
 }
 
-
-//    ✅ MONGODB CONNECTION
-
+// 7. MONGODB CONNECTION
 const uri = process.env.MONGODB_URI;
-
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
@@ -154,10 +163,11 @@ async function connectDB() {
         dbStatus = 'Failed';
         dbError = error;
         console.error('MongoDB Connection Error:', error);
+        throw error; // Propagate error to startServer
     }
 }
 
-connectDB();
+
 
 
 //    ✅ BASIC HEALTH CHECK ROUTE
@@ -248,7 +258,7 @@ const verifyADMIN = async (req, res, next) => {
 
 
 //  Create User (POST /user) - Used by Register & Login
-app.post('/user', async (req, res) => {
+app.post('/user', catchAsync(async (req, res) => {
     const user = req.body;
     // Ensure displayName is saved if provided
     if (user.displayName && !user.name) user.name = user.displayName;
@@ -260,29 +270,29 @@ app.post('/user', async (req, res) => {
     }
     const result = await usersCollection.insertOne(user);
     res.send(result);
-});
+}));
 
 //  Get User Role (GET /users/:email) - Used by AuthContext
-app.get('/users/:email', async (req, res) => {
+app.get('/users/:email', catchAsync(async (req, res) => {
     const email = req.params.email;
     const query = { email: email };
     const user = await usersCollection.findOne(query);
     res.send(user);
-});
+}));
 
 //  Get All Users (GET /users) - Used by Admin ManageUsers
-app.get('/users', verifyJWT, verifyADMIN, async (req, res) => {
+app.get('/users', verifyJWT, verifyADMIN, catchAsync(async (req, res) => {
     const result = await usersCollection.find().toArray();
     res.send(result);
-});
+}));
 
 //  Delete User (DELETE /user/:id) - Used by Admin ManageUsers
-app.delete('/user/:id', verifyJWT, verifyADMIN, async (req, res) => {
+app.delete('/user/:id', verifyJWT, verifyADMIN, catchAsync(async (req, res) => {
     const id = req.params.id;
     const query = { _id: new ObjectId(id) };
     const result = await usersCollection.deleteOne(query);
     res.send(result);
-});
+}));
 
 // Update User Role (PATCH /update-role/:id) - Used by Admin ManageUsers
 app.patch('/update-role/:id', verifyJWT, verifyADMIN, async (req, res) => {
@@ -1745,20 +1755,30 @@ app.post('/payment-success', verifyJWT, verifySTUDENT, async (req, res) => {
 
 // End of Routes
 
-// Root Route (Moved outside for better visibility)
-app.get('/', (req, res) => {
-    res.send({
-        status: 'Server Running',
-        dbStatus,
-        dbError: dbError ? dbError.message : null,
-        timestamp: new Date()
+// 8. GLOBAL ERROR HANDLING MIDDLEWARE
+app.use((err, req, res, next) => {
+    console.error('SERVER ERROR:', err.stack);
+    res.status(err.status || 500).send({
+        success: false,
+        message: err.message || 'Something went wrong on the server',
+        error: process.env.NODE_ENV === 'production' ? {} : err.message
     });
 });
 
+async function startServer() {
+    try {
+        await connectDB();
+        app.listen(port, () => {
+            console.log(`eTuitionBd Server is running on port ${port}`);
+            console.log(`Allowed Origins: ${allowedOrigins.join(', ')}`);
+        });
+    } catch (error) {
+        console.error('Server startup failed:', error);
+        process.exit(1);
+    }
+}
 
-app.listen(port, () => {
-    console.log(`eTuitionBd Server is running on port ${port}`);
-});
+startServer();
 
-// Export app for Vercel
+// Export app for Vercel/Render (compatibility)
 module.exports = app;
