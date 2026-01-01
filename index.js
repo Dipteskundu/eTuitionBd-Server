@@ -69,10 +69,10 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     }
 } else {
     try {
-        serviceAccount = require('./firebase-service-key.json');
+        serviceAccount = require('./assingment-11-service-key.json');
         console.log('Firebase key loaded from local JSON');
     } catch (err) {
-        console.error('Firebase key not found. Set FIREBASE_SERVICE_ACCOUNT or local JSON file.');
+        console.error('Firebase key not found. Set FIREBASE_SERVICE_ACCOUNT or add assingment-11-service-key.json file.');
         process.exit(1);
     }
 }
@@ -129,7 +129,7 @@ async function connectDB() {
 
         const db = client.db('tuitionDB');
         usersCollection = db.collection('users');
-        tuitionsPostCollection = db.collection('tuitions-post');
+        tuitionsPostCollection = db.collection('tuitions');
         applicationsCollection = db.collection('tutorApplications');
         paymentsCollection = db.collection('payments');
         roleRequestsCollection = db.collection('teacherRoleRequests');
@@ -191,9 +191,9 @@ const verifyFBToken = async (req, res, next) => {
     try {
         const decodedToken = await admin.auth().verifyIdToken(token);
         req.decoded = decodedToken;
-        
+
         req.decoded_email = decodedToken.email;
-        
+
         req.tokenEmail = decodedToken.email;
         next();
     } catch (error) {
@@ -825,13 +825,13 @@ app.post('/messages', verifyFBToken, async (req, res) => {
             { $set: { lastMessage: content, lastMessageAt: new Date() } }
         );
 
-   
+
         const conv = await conversationsCollection.findOne({ _id: new ObjectId(conversationId) });
 
 
         const recipientEmail = conv.participants.find(p => p.toLowerCase() !== senderEmail);
 
-  
+
         const sender = await usersCollection.findOne({
             email: { $regex: new RegExp(`^${senderEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
         });
@@ -1141,7 +1141,7 @@ app.post('/apply-tuition', verifyFBToken, verifyTUTOR, async (req, res) => {
 
 
 
-app.get('/tuitions-post', verifyFBToken, verifyTUTOR, async (req, res) => {
+app.get('/tuitions', verifyFBToken, verifyTUTOR, async (req, res) => {
 
     const status = req.query.status || 'approved';
     const query = {
@@ -1244,17 +1244,17 @@ app.patch('/role-requests/:id', verifyFBToken, verifyADMIN, async (req, res) => 
             { $set: { role: 'tutor' } }
         );
 
-  
-  
-  
-  
+
+
+
+
         if (userUpdate.modifiedCount === 0) {
 
             console.warn(`User ${request.userEmail} not found while approving role.`);
         }
     }
 
-    
+
     const filter = { _id: new ObjectId(id) };
     const updateDoc = {
         $set: {
@@ -1363,7 +1363,7 @@ app.post('/tuition-application', verifyFBToken, verifyTUTOR, async (req, res) =>
         return res.status(409).send({ message: 'Already applied' });
     }
 
-    
+
     const tuition = await tuitionsPostCollection.findOne({ _id: new ObjectId(tuitionId) });
     if (!tuition) return res.status(404).send({ message: 'Tuition not found' });
     if (tuition.status !== 'approved') return res.status(403).send({ message: 'Tuition is not open' });
@@ -1543,7 +1543,7 @@ app.post('/payments/demo', verifyFBToken, verifySTUDENT, async (req, res) => {
     };
     const paymentResult = await paymentsCollection.insertOne(payment);
 
-    
+
     await applicationsCollection.updateOne(
         { _id: new ObjectId(applicationId) },
         { $set: { status: 'approved', paymentId: transactionId } }
@@ -1664,15 +1664,24 @@ app.put('/tutor/profile', verifyFBToken, verifyTUTOR, async (req, res) => {
     res.send(result);
 });
 
-app.post('/tuitions-post', verifyFBToken, verifySTUDENT, catchAsync(async (req, res) => {
+app.post('/tuitions', verifyFBToken, verifySTUDENT, catchAsync(async (req, res) => {
     const tuition = req.body;
+
+    // Map frontend fields to database schema
     const newTuition = {
-        ...tuition,
-        studentId: req.tokenEmail,
+        studentEmail: req.tokenEmail,
+        subject: tuition.subject,
+        class: tuition.class,
+        location: tuition.location,
+        salary: String(tuition.salary),
+        daysPerWeek: parseInt(tuition.daysPerWeek) || 0,
+        genderPreference: tuition.tutorGender || tuition.genderPreference || 'Any',
+        description: tuition.requirements || tuition.description || '',
         status: 'pending',
         created_at: new Date(),
         updated_at: new Date()
     };
+
     const result = await tuitionsPostCollection.insertOne(newTuition);
 
     try {
@@ -1699,7 +1708,7 @@ app.post('/tuitions-post', verifyFBToken, verifySTUDENT, catchAsync(async (req, 
 
 app.get('/my-tuitions', verifyFBToken, verifySTUDENT, async (req, res) => {
     const email = req.tokenEmail;
-    const query = { studentId: email };
+    const query = { studentEmail: email };
     const result = await tuitionsPostCollection.find(query).toArray();
     res.send(result);
 });
@@ -1708,13 +1717,20 @@ app.get('/my-tuitions', verifyFBToken, verifySTUDENT, async (req, res) => {
 app.put('/tuition/:id', verifyFBToken, verifySTUDENT, async (req, res) => {
     const id = req.params.id;
     const email = req.tokenEmail;
-    const updatedData = req.body;
-    delete updatedData._id;
+    const data = req.body;
 
-    const filter = { _id: new ObjectId(id), studentId: email };
+    const filter = { _id: new ObjectId(id), studentEmail: email };
+
+    // Map frontend fields to database schema
     const updateDoc = {
         $set: {
-            ...updatedData,
+            subject: data.subject,
+            class: data.class,
+            location: data.location,
+            salary: String(data.salary),
+            daysPerWeek: parseInt(data.daysPerWeek) || 0,
+            genderPreference: data.tutorGender || data.genderPreference || 'Any',
+            description: data.requirements || data.description || '',
             updated_at: new Date()
         }
     };
@@ -1727,6 +1743,19 @@ app.put('/tuition/:id', verifyFBToken, verifySTUDENT, async (req, res) => {
 });
 
 
+app.delete('/tuition/:id', verifyFBToken, verifySTUDENT, catchAsync(async (req, res) => {
+    const id = req.params.id;
+    const email = req.tokenEmail;
+
+    const filter = { _id: new ObjectId(id), studentEmail: email };
+    const result = await tuitionsPostCollection.deleteOne(filter);
+
+    if (result.deletedCount === 0) {
+        return res.status(404).send({ message: 'Tuition not found or unauthorized' });
+    }
+
+    res.send({ message: 'Tuition deleted successfully', result });
+}));
 
 
 
