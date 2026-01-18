@@ -36,11 +36,7 @@ process.on('uncaughtException', (error) => {
 });
 
 
-app.use((req, res, next) => {
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    next();
-});
+
 
 
 app.use(cors());
@@ -197,8 +193,15 @@ const verifyFBToken = async (req, res, next) => {
         req.tokenEmail = decodedToken.email;
         next();
     } catch (error) {
-        console.error('JWT Verification Error:', error.message);
-        return res.status(401).send({ message: 'Unauthorized access: Invalid token' });
+        console.error('JWT Verification Error Details:', {
+            code: error.code,
+            message: error.message,
+            token_excerpt: token ? token.substring(0, 10) + '...' : 'none'
+        });
+        return res.status(401).send({
+            message: 'Unauthorized access: Invalid token',
+            error: error.message
+        });
     }
 };
 
@@ -491,6 +494,18 @@ app.get('/tuitions', async (req, res) => {
 
 
 app.get('/tuitions/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+        const query = { _id: new ObjectId(id) };
+        const result = await tuitionsPostCollection.findOne(query);
+        res.send(result);
+    } catch (error) {
+        console.error("Error fetching tuition:", error);
+        res.status(500).send({ message: "Error fetching tuition details" });
+    }
+});
+
+app.get('/tuition/:id', async (req, res) => {
     const id = req.params.id;
     try {
         const query = { _id: new ObjectId(id) };
